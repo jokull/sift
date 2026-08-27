@@ -37,8 +37,11 @@ func main() {
 		case "plan":
 			runPlan()
 			return
+		case "setup":
+			runSetup()
+			return
 		case "help", "-h", "--help":
-			fmt.Println("usage: sift [list|doctor|plan|--dry-run]")
+			fmt.Println("usage: sift [list|doctor|plan|setup|--dry-run]")
 			return
 		}
 	}
@@ -134,6 +137,29 @@ func hasFlag(args []string, names ...string) bool {
 	return false
 }
 
+// runSetup makes sift usable over SSH, where the macOS login keychain is often
+// not accessible. It reads the Fastmail JMAP token (from the keychain when
+// available) and writes it into the sift config file, so future runs no longer
+// depend on the keychain.
+func runSetup() {
+	const user = "jokull@solberg.is"
+	token, err := config.ReadFastmailToken()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sift setup: could not read the Fastmail JMAP token.")
+		fmt.Fprintln(os.Stderr, "  "+err.Error())
+		fmt.Fprintln(os.Stderr, "  Run this in your desktop (GUI) session once, or set")
+		fmt.Fprintln(os.Stderr, "  SIFT_FASTMAIL_JMAP_TOKEN=<token> in your shell profile instead.")
+		os.Exit(1)
+	}
+	path := config.DefaultConfigPath()
+	if err := config.WriteFastmailToken(path, token); err != nil {
+		fatal("write config: %v", err)
+	}
+	fmt.Printf("Wrote Fastmail JMAP token for %s into:\n  %s\n", user, path)
+	fmt.Println("sift will now use the config token and no longer needs the keychain.")
+	fmt.Println("(Add ~/.config/sift/config.toml to your dotfiles backup, not the repo.)")
+}
+
 func runUI(dryRun bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -202,6 +228,9 @@ func runPlan() {
 	fmt.Printf("loaded=%d  today_untouched=%d  receipts=%d  reading=%d  candidates=%d  kept_inline=%d\n",
 		plan.Stats.Loaded, plan.Stats.Protected, plan.Stats.AutoReceipts, plan.Stats.AutoReading,
 		plan.Stats.Candidates, plan.Stats.KeptInline)
+	for _, w := range plan.Warnings {
+		fmt.Printf("warning: %s\n", w)
+	}
 	fmt.Printf("auto:\n")
 	for _, a := range plan.Auto {
 		fmt.Printf("  [%s] %s → %s  |  %s\n", a.Account, a.Action, a.Thread.FromEmail, a.Thread.Subject)

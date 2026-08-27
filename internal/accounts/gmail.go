@@ -25,6 +25,15 @@ func newGmail(cfg *config.GmailConfig) (*gmailSource, error) {
 
 func (g *gmailSource) Account() model.Account { return model.AccountGmail }
 
+// gog runs the CLI, injecting GOG_ACCESS_TOKEN when one is configured (for SSH
+// sessions where the gog keychain token is unavailable).
+func (g *gmailSource) gog(ctx context.Context, args ...string) (string, error) {
+	if g.cfg.AccessToken != "" {
+		return execGogEnv(ctx, g.cfg.GogBin, []string{"GOG_ACCESS_TOKEN=" + g.cfg.AccessToken}, args...)
+	}
+	return execGog(ctx, g.cfg.GogBin, args...)
+}
+
 // gmailThread mirrors the gog `gmail search` JSON rows.
 type gmailThread struct {
 	Date            string   `json:"date"`
@@ -40,14 +49,14 @@ func (g *gmailSource) ListThreads(ctx context.Context, limit int) ([]*model.Thre
 	if limit <= 0 {
 		limit = 60
 	}
-	out, err := execGog(ctx, g.cfg.GogBin,
+	out, err := g.gog(ctx,
 		"gmail", "search", "in:inbox",
 		"-a", g.cfg.Account,
 		"--max="+fmt.Sprint(limit),
 		"--results-only", "-j", "--no-input",
 	)
 	if err != nil {
-		return nil, classifyGogError("gmail search", err, out)
+		return nil, gogHint("gmail search", err, out)
 	}
 	var rows []gmailThread
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
@@ -99,7 +108,7 @@ func (g *gmailSource) Apply(ctx context.Context, threads []*model.Thread, action
 		default:
 			return fmt.Errorf("gmail: unsupported action %q", action)
 		}
-		out, err := execGog(ctx, g.cfg.GogBin, args...)
+		out, err := g.gog(ctx, args...)
 		if err != nil {
 			return classifyGogError(fmt.Sprintf("gmail modify %s", th.ID), err, out)
 		}
@@ -108,7 +117,7 @@ func (g *gmailSource) Apply(ctx context.Context, threads []*model.Thread, action
 }
 
 func (g *gmailSource) EnsureFolders(ctx context.Context) error {
-	out, err := execGog(ctx, g.cfg.GogBin,
+	out, err := g.gog(ctx,
 		"gmail", "labels", "list",
 		"-a", g.cfg.Account, "--results-only", "-j", "--no-input")
 	if err != nil {
@@ -136,7 +145,7 @@ func (g *gmailSource) EnsureFolders(ctx context.Context) error {
 		if want == "" || have[want] {
 			continue
 		}
-		if _, err := execGog(ctx, g.cfg.GogBin,
+		if _, err := g.gog(ctx,
 			"gmail", "labels", "create", want,
 			"-a", g.cfg.Account, "--no-input"); err != nil {
 			return fmt.Errorf("create gmail label %q: %w", want, err)
@@ -181,6 +190,18 @@ func classifyGogError(op string, err error, out string) error {
 		return fmt.Errorf("%s: %w", op, err)
 	}
 	return fmt.Errorf("%s: %w (%s)", op, err, truncate(msg, 300))
+}
+
+// gogHint wraps a gog failure with SSH remediation when the cause looks like a
+// keychain/credential access problem, which is common over SSH.
+func gogHint(op string, err error, out string) error {
+	base := classifyGogError(op, err, out)
+	msg := strings.ToLower(out + " " + err.Error())
+	if strings.Contains(msg, "keychain") || strings.Contains(msg, "credential") ||
+		strings.Contains(msg, "interaction") || strings.Contains(msg, "keyring") {
+		return fmt.Errorf("%w — gog couldn't read its Gmail token from the macOS keychain. Over SSH, set [gmail] access_token (a ~1h token from `gog` in your desktop session) or run sift from a GUI session.", base)
+	}
+	return base
 }
 
 func truncate(s string, n int) string {

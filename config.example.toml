@@ -18,6 +18,9 @@
 # user = "jokull@solberg.is"
 # account_id = "u9dd94086"
 # api_url = "https://phl.api.fastmail.com/jmap/api/"
+# -- Over SSH the macOS keychain is often unavailable; run `sift setup` to write
+# -- the JMAP token here once (uses the keychain from your desktop session).
+# token = ""
 # [fastmail.folders]
 # inbox = "P-F"
 # archive = "P2V"
@@ -30,6 +33,9 @@
 # inbox_label = "INBOX"
 # receipts_label = "Receipts"
 # reading_label = "Reading"
+# -- Optional: a short-lived Gmail access token if the gog keychain token isn't
+# -- available in this session (set via `gog auth status`, expires in ~1h).
+# access_token = ""
 
 # Senders whose promotions are kept (never archived). Add one per line.
 # whitelist = ["friend@example.com"]

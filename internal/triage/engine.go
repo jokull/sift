@@ -59,6 +59,7 @@ type Plan struct {
 	Auto       []AutoJob
 	Today      []*model.Thread
 	Stats      Stats
+	Warnings   []string // non-fatal per-account problems (e.g. gog keychain over SSH)
 }
 
 // Engine loads and classifies inboxes from multiple sources.
@@ -82,16 +83,16 @@ func New(sources map[model.Account]accounts.Source, aiClient *ai.Client, store *
 
 // Load fetches, classifies and partitions the inboxes.
 func (e *Engine) Load(ctx context.Context) (*Plan, error) {
-	threads, err := e.loadThreads(ctx)
+	threads, warnings, err := e.loadThreads(ctx)
 	if err != nil {
 		return nil, err
 	}
-	plan := &Plan{}
+	plan := &Plan{Warnings: warnings}
 	e.protectAndClassify(ctx, threads, plan)
 	return plan, nil
 }
 
-func (e *Engine) loadThreads(ctx context.Context) ([]*model.Thread, error) {
+func (e *Engine) loadThreads(ctx context.Context) ([]*model.Thread, []string, error) {
 	type res struct {
 		acct model.Account
 		ts   []*model.Thread
@@ -115,14 +116,19 @@ func (e *Engine) loadThreads(ctx context.Context) ([]*model.Thread, error) {
 	close(results)
 
 	var all []*model.Thread
+	var warnings []string
 	for r := range results {
 		if r.err != nil {
-			return nil, fmt.Errorf("load %s: %w", r.acct, r.err)
+			warnings = append(warnings, fmt.Sprintf("%s unavailable: %v", r.acct, r.err))
+			continue
 		}
 		all = append(all, r.ts...)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Date.After(all[j].Date) })
-	return all, nil
+	if len(all) == 0 && len(warnings) > 0 {
+		return nil, warnings, fmt.Errorf("no accounts loaded")
+	}
+	return all, warnings, nil
 }
 
 func (e *Engine) protectAndClassify(ctx context.Context, threads []*model.Thread, plan *Plan) {

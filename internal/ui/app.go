@@ -96,6 +96,9 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stats = msg.plan.Stats
 		m.loadingMsg = ""
 		m.status = planStatus(msg.plan)
+		if len(msg.plan.Warnings) > 0 {
+			m.status += "  ·  ⚠ " + msg.plan.Warnings[0]
+		}
 		m.submitAutoJobs()
 		return m, m.waitProgress()
 	case errMsg:

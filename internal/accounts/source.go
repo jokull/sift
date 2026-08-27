@@ -6,6 +6,7 @@ package accounts
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/jokull/sift/internal/config"
@@ -53,6 +54,16 @@ func New(cfg *config.Config) (map[model.Account]Source, error) {
 // execGog runs the gog CLI returning combined output and trimming whitespace.
 func execGog(ctx context.Context, gogBin string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, gogBin, args...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// execGogEnv is execGog with an extra env entry (used to inject GOG_ACCESS_TOKEN).
+func execGogEnv(ctx context.Context, gogBin string, env []string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, gogBin, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

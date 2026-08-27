@@ -77,6 +77,26 @@ Auto-discovery finds everything, so no config is needed. To override defaults,
 copy `config.example.toml` to `~/.config/sift/config.toml` (or `$XDG_CONFIG_HOME`).
 `sift doctor` prints what it resolved.
 
+### Running over SSH
+
+macOS login keychain is often **not accessible from an SSH session**, so the
+keychain read can fail with `exit 36` (`errSecInteractionNotAllowed`). To make
+`sift` work over SSH:
+
+```bash
+sift setup        # once, from a desktop/GUI session: writes the Fastmail JMAP
+                  # token into ~/.config/sift/config.toml (mode 0600)
+```
+
+After that, `sift` reads the Fastmail token from the config file and no longer
+needs the keychain. Gmail still goes through `gog`; if its keychain token is
+also unavailable over SSH, `sift` degrades gracefully — it loads the Fastmail
+inbox and prints a warning, and you can supply a Gmail access token via
+`[gmail] access_token` (a ~1h token) in the config to restore it.
+
+The values in `~/.config/sift/config.toml` are machine-local; back them up with
+your dotfiles, not the repo.
+
 ## How the AI is used (keeping cost + latency low)
 
 1. **One batched classification call** covers up to ~30 threads at a time

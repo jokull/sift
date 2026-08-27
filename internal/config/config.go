@@ -49,6 +49,7 @@ type GmailConfig struct {
 	InboxLabel    string `json:"inbox_label"`
 	ReceiptsLabel string `json:"receipts_label"`
 	ReadingLabel  string `json:"reading_label"`
+	AccessToken   string `json:"access_token,omitempty"` // optional GOG_ACCESS_TOKEN override (short-lived)
 	EnsureLabels  bool   `json:"-"`
 }
 
@@ -69,6 +70,7 @@ type FileConfig struct {
 		InboxLabel    string `toml:"inbox_label"`
 		ReceiptsLabel string `toml:"receipts_label"`
 		ReadingLabel  string `toml:"reading_label"`
+		AccessToken   string `toml:"access_token"`
 	} `toml:"gmail"`
 	Whitelist []string `toml:"whitelist"`
 }
@@ -76,6 +78,11 @@ type FileConfig struct {
 // Load resolves configuration, applying optional file overrides on top of the
 // OpenClaw-derived defaults. filePath is empty for pure discovery.
 func Load(filePath string) (*Config, error) {
+	if filePath == "" {
+		filePath = DefaultConfigPath()
+	}
+	file := loadFile(filePath)
+
 	cfg := &Config{
 		DeepSeek: DeepSeekConfig{
 			BaseURL: "https://api.deepseek.com",
@@ -83,24 +90,37 @@ func Load(filePath string) (*Config, error) {
 			APIKey:  os.Getenv("DEEPSEEK_API_KEY"),
 		},
 	}
-
 	// Fall back to the OpenClaw .env for the DeepSeek key if not in the env.
 	if cfg.DeepSeek.APIKey == "" {
 		cfg.DeepSeek.APIKey = deepseekKeyFromOpenClaw()
 	}
 
-	if err := cfg.discoverFastmail(); err != nil {
+	// Fastmail: resolve the JMAP token from env → config file → keychain, then
+	// discover the session. The keychain can be unavailable over SSH (exit 36),
+	// so we let a token given in env/config win and produce an actionable error
+	// otherwise.
+	fileToken := ""
+	if file != nil && file.Fastmail != nil {
+		fileToken = file.Fastmail.Token
+	}
+	token, src, err := resolveFastmailToken(fileToken)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.discoverFastmail(token, src); err != nil {
 		return nil, fmt.Errorf("fastmail discovery: %w", err)
 	}
+
 	if err := cfg.discoverGmail(); err != nil {
 		return nil, fmt.Errorf("gmail discovery: %w", err)
 	}
 
-	if filePath == "" {
-		filePath = DefaultConfigPath()
-	}
-	if file := loadFile(filePath); file != nil {
+	if file != nil {
 		applyFile(cfg, file)
+	}
+	// If the file supplied a Fastmail token, prefer it over the keychain one.
+	if fileToken != "" {
+		cfg.Fastmail.Token = fileToken
 	}
 
 	return cfg, nil
@@ -121,12 +141,8 @@ func DefaultConfigPath() string {
 // ConfigPathDir returns the directory containing the config file.
 func ConfigPathDir() string { return filepath.Dir(DefaultConfigPath()) }
 
-func (c *Config) discoverFastmail() error {
+func (c *Config) discoverFastmail(token, src string) error {
 	const user = "jokull@solberg.is"
-	token, err := keychainSecret(user, "fastmail-jmap")
-	if err != nil {
-		return fmt.Errorf("read JMAP token from keychain: %w", err)
-	}
 	sess, err := jmap.Discover(token)
 	if err != nil {
 		return fmt.Errorf("jmap session: %w", err)
@@ -160,6 +176,7 @@ func (c *Config) discoverFastmail() error {
 		APIURL:    sess.APIURL,
 		Folders:   f,
 	}
+	_ = src
 	if c.Fastmail.Folders.Inbox == "" {
 		return fmt.Errorf("fastmail discovery found no inbox mailbox")
 	}
@@ -236,6 +253,9 @@ func applyFile(cfg *Config, f *FileConfig) {
 		if f.Gmail.ReadingLabel != "" {
 			cfg.Gmail.ReadingLabel = f.Gmail.ReadingLabel
 		}
+		if f.Gmail.AccessToken != "" {
+			cfg.Gmail.AccessToken = f.Gmail.AccessToken
+		}
 	}
 	if len(f.Whitelist) > 0 {
 		cfg.Whitelist = f.Whitelist
@@ -265,6 +285,126 @@ func keychainSecret(account, service string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// resolveFastmailToken sources the JMAP token from, in order: env, config file,
+// macOS keychain, then the legacy ME_FASTMAIL_PASS env var. It returns a
+// descriptive source for diagnostics.
+func resolveFastmailToken(fileToken string) (string, string, error) {
+	const user = "jokull@solberg.is"
+
+	if v := strings.TrimSpace(os.Getenv("SIFT_FASTMAIL_JMAP_TOKEN")); v != "" {
+		return v, "env SIFT_FASTMAIL_JMAP_TOKEN", nil
+	}
+	if fileToken != "" {
+		return fileToken, "config file", nil
+	}
+	if kc, err := keychainSecret(user, "fastmail-jmap"); err == nil {
+		return kc, "keychain", nil
+	} else if isKeychainInteractionError(err) {
+		// SSH sessions often cannot unlock the login keychain. Suggest the env
+		// route rather than failing cryptically.
+		if v := strings.TrimSpace(os.Getenv("ME_FASTMAIL_PASS")); v != "" {
+			return v, "env ME_FASTMAIL_PASS", nil
+		}
+		return "", "", fmt.Errorf("macOS keychain is not accessible here (%s). If you are over SSH, establish the token with `sift setup` (or set SIFT_FASTMAIL_JMAP_TOKEN) and retry.", errHint(err))
+	}
+	if v := strings.TrimSpace(os.Getenv("ME_FASTMAIL_PASS")); v != "" {
+		return v, "env ME_FASTMAIL_PASS", nil
+	}
+	return "", "", fmt.Errorf("could not read the Fastmail JMAP token. Set SIFT_FASTMAIL_JMAP_TOKEN, or run `sift setup` to write it to the sift config.")
+}
+
+// isKeychainInteractionError reports whether a `security` failure is due to
+// user interaction being disallowed (e.g. locked keychain over SSH), which we
+// want to route towards the env/config fallback.
+func isKeychainInteractionError(err error) bool {
+	ee, ok := err.(*exec.ExitError)
+	if !ok {
+		return false
+	}
+	// errSecInteractionNotAllowed surfaces as exit status 36 from the CLI.
+	return ee.ExitCode() == 36
+}
+
+// errHint extracts a short stderr tail from a security failure for the message.
+func errHint(err error) string {
+	if ee, ok := err.(*exec.ExitError); ok {
+		s := strings.TrimSpace(string(ee.Stderr))
+		if s != "" {
+			return truncate(s, 120)
+		}
+	}
+	return err.Error()
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// ReadFastmailToken returns the JMAP token from env or the macOS keychain.
+func ReadFastmailToken() (string, error) {
+	const user = "jokull@solberg.is"
+	if v := strings.TrimSpace(os.Getenv("SIFT_FASTMAIL_JMAP_TOKEN")); v != "" {
+		return v, nil
+	}
+	token, err := keychainSecret(user, "fastmail-jmap")
+	if err != nil {
+		return "", fmt.Errorf("read %s/fastmail-jmap from keychain: %w", user, err)
+	}
+	return token, nil
+}
+
+// WriteFastmailToken persists the JMAP token into the sift config file, merging
+// it into an existing [fastmail] section (or appending one). This lets sift run
+// without the keychain, which is often unavailable over SSH.
+func WriteFastmailToken(path, token string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	b, _ := os.ReadFile(path)
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+
+	out := []string{}
+	inserted := false
+	inFastmail := false
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		isSection := strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]") && !strings.HasPrefix(t, "[[")
+		if isSection {
+			inFastmail = t == "[fastmail]"
+			out = append(out, ln)
+			if inFastmail && !inserted {
+				out = append(out, `token = "`+tomlEscape(token)+`"`)
+				inserted = true
+			}
+			continue
+		}
+		if inFastmail {
+			if strings.HasPrefix(t, "token") {
+				continue // drop a stale token; a fresh one was inserted above
+			}
+			if t == "" && !inserted {
+				continue
+			}
+		}
+		out = append(out, ln)
+	}
+	if !inserted {
+		if len(out) > 0 && out[len(out)-1] != "" {
+			out = append(out, "")
+		}
+		out = append(out, "[fastmail]", `token = "`+tomlEscape(token)+`"`)
+	}
+	return os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o600)
+}
+
+func tomlEscape(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+	return r.Replace(s)
 }
 
 func deepseekKeyFromOpenClaw() string {
