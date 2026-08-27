@@ -1,0 +1,215 @@
+// Command sift is a TUI for triaging the Fastmail (personal) and Gmail (work)
+// inboxes: prune signal from noise using DeepSeek-assisted classification and
+// per-sender decisions, leaving personal mail untouched.
+//
+// Subcommands:
+//
+//	sift            run the interactive triage TUI
+//	sift list       print merged inbox threads (newest first) without a TUI
+//	sift doctor     verify account connectivity and print the resolved config
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/jokull/sift/internal/accounts"
+	"github.com/jokull/sift/internal/ai"
+	"github.com/jokull/sift/internal/config"
+	"github.com/jokull/sift/internal/model"
+	"github.com/jokull/sift/internal/state"
+	"github.com/jokull/sift/internal/triage"
+	"github.com/jokull/sift/internal/ui"
+)
+
+func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "list":
+			runList()
+			return
+		case "doctor":
+			runDoctor()
+			return
+		case "plan":
+			runPlan()
+			return
+		case "help", "-h", "--help":
+			fmt.Println("usage: sift [list|doctor|plan|--dry-run]")
+			return
+		}
+	}
+	runTUI()
+}
+
+func runList() {
+	cfg, err := config.Load(config.DefaultConfigPath())
+	if err != nil {
+		fatal("config: %v", err)
+	}
+	srcs, err := accounts.New(cfg)
+	if err != nil {
+		fatal("accounts: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	for _, src := range srcs {
+		threads, err := src.ListThreads(ctx, 40)
+		if err != nil {
+			fatal("list %s: %v", src.Account(), err)
+		}
+		fmt.Printf("== %s: %d threads\n", src.Account(), len(threads))
+		for _, t := range threads {
+			fmt.Printf("  %-16s %-24s %s\n", t.Date.Format("2006-01-02 15:04"), truncateEmail(t.FromEmail), truncateSubj(t.Subject))
+		}
+	}
+}
+
+func runDoctor() {
+	cfg, err := config.Load(config.DefaultConfigPath())
+	if err != nil {
+		fatal("config: %v", err)
+	}
+	fmt.Printf("deepseek: base=%s model=%s key=%s\n", cfg.DeepSeek.BaseURL, cfg.DeepSeek.Model, present(cfg.DeepSeek.APIKey))
+	if cfg.Fastmail != nil {
+		f := cfg.Fastmail
+		fmt.Printf("fastmail: user=%s acct=%s api=%s\n", f.User, f.AccountID, f.APIURL)
+		fmt.Printf("  folders: inbox=%s archive=%s receipts=%s reading=%s\n", f.Folders.Inbox, f.Folders.Archive, f.Folders.Receipts, f.Folders.Reading)
+	}
+	if cfg.Gmail != nil {
+		g := cfg.Gmail
+		fmt.Printf("gmail: acct=%s gog=%s inbox=%s receipts=%s reading=%s\n", g.Account, g.GogBin, g.InboxLabel, g.ReceiptsLabel, g.ReadingLabel)
+	}
+}
+
+func present(s string) string {
+	if s == "" {
+		return "<none>"
+	}
+	if len(s) <= 8 {
+		return "<set>"
+	}
+	return s[:8] + "…"
+}
+
+func truncateEmail(s string) string {
+	if len(s) > 24 {
+		return s[:24]
+	}
+	return s
+}
+
+func truncateSubj(s string) string {
+	if len(s) > 44 {
+		return s[:44] + "…"
+	}
+	return s
+}
+
+func fatal(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "sift: "+format+"\n", args...)
+	os.Exit(1)
+}
+
+// runTUI is filled in by the UI package; declared here so main compiles before
+// the TUI exists, and defined with a real implementation once UI lands.
+var runTUI = func() {
+	dryRun := hasFlag(os.Args[1:], "-n", "--dry-run")
+	if err := runUI(dryRun); err != nil {
+		fatal("%v", err)
+	}
+}
+
+func hasFlag(args []string, names ...string) bool {
+	for _, a := range args {
+		for _, n := range names {
+			if a == n {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func runUI(dryRun bool) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	engine, store, srcs, err := buildEngine(ctx)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	// Ensure Gmail target labels exist (Receipts/Reading) before acting.
+	for _, src := range srcs {
+		if err := src.EnsureFolders(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "sift: %s: ensure folders: %v\n", src.Account(), err)
+		}
+	}
+
+	worker := triage.NewWorker(srcs, 3, dryRun)
+	worker.Start(ctx)
+	defer worker.Close()
+
+	app := ui.New(engine, worker, store, ctx)
+	p := tea.NewProgram(app, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("tui: %w", err)
+	}
+	return nil
+}
+
+// buildEngine wires config → accounts → state → engine.
+func buildEngine(ctx context.Context) (*triage.Engine, *state.Store, map[model.Account]accounts.Source, error) {
+	cfg, err := config.Load(config.DefaultConfigPath())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	srcs, err := accounts.New(cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	store, err := state.Open(state.DefaultPath())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	engine := triage.New(srcs, ai.New(cfg.DeepSeek), store)
+	return engine, store, srcs, nil
+}
+
+// runPlan prints the classification plan without entering the TUI (verification).
+func runPlan() {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	engine, store, srcs, err := buildEngine(ctx)
+	if err != nil {
+		fatal("setup: %v", err)
+	}
+	defer store.Close()
+	for _, src := range srcs {
+		if err := src.EnsureFolders(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "sift: %s: ensure folders: %v\n", src.Account(), err)
+		}
+	}
+	plan, err := engine.Load(ctx)
+	if err != nil {
+		fatal("load: %v", err)
+	}
+	fmt.Printf("loaded=%d  today_untouched=%d  receipts=%d  reading=%d  candidates=%d  kept_inline=%d\n",
+		plan.Stats.Loaded, plan.Stats.Protected, plan.Stats.AutoReceipts, plan.Stats.AutoReading,
+		plan.Stats.Candidates, plan.Stats.KeptInline)
+	fmt.Printf("auto:\n")
+	for _, a := range plan.Auto {
+		fmt.Printf("  [%s] %s → %s  |  %s\n", a.Account, a.Action, a.Thread.FromEmail, a.Thread.Subject)
+	}
+	fmt.Printf("candidates (newest → oldest):\n")
+	for _, c := range plan.Candidates {
+		fmt.Printf("  ▶ %-11s %-10s conf=%3.0f%%  ×%d  %-14s | %s\n",
+			c.Pred.Category, c.Pred.Action, c.Pred.Confidence*100, c.CohortCount(),
+			truncateEmail(c.Thread.FromEmail), truncateSubj(c.Thread.Subject))
+	}
+}

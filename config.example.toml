@@ -1,0 +1,35 @@
+# sift — optional configuration override file.
+#
+# Everything is auto-discovered from your existing OpenClaw setup, so an
+# empty/missing file works out of the box. Add values here ONLY to override
+# the discovered defaults. Point sift at a custom path with SIFT_CONFIG, or
+# leave it at ~/.config/sift/config.toml.
+#
+# NOTE: do not paste secrets (JMAP token, API keys) into this file if you plan
+# to commit it. sift reads the Fastmail JMAP token and DeepSeek key from your
+# existing OpenClaw keychain/.env automatically.
+
+[deepseek]
+# base_url = "https://api.deepseek.com"
+# model = "deepseek-v4-flash"
+# api_key = ""            # leave empty to read DEEPSEEK_API_KEY / ~/.openclaw/.env
+
+[fastmail]
+# user = "jokull@solberg.is"
+# account_id = "u9dd94086"
+# api_url = "https://phl.api.fastmail.com/jmap/api/"
+# [fastmail.folders]
+# inbox = "P-F"
+# archive = "P2V"
+# receipts = "P1Wct"
+# reading = "P4k"
+
+[gmail]
+# account = "jokull@triptojapan.com"
+# gog_bin = "/opt/homebrew/bin/gog"
+# inbox_label = "INBOX"
+# receipts_label = "Receipts"
+# reading_label = "Reading"
+
+# Senders whose promotions are kept (never archived). Add one per line.
+# whitelist = ["friend@example.com"]
