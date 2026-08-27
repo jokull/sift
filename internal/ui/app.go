@@ -166,12 +166,14 @@ func (m *appModel) applyDecision(idx int, action model.Action, wholeCohort bool)
 
 	if action != model.ActionKeep {
 		label := fmt.Sprintf("%s x%d", actionName(action), len(threads))
-		m.worker.Submit(&triage.Job{
-			Account: can.Thread.Account,
-			Threads: threads,
-			Action:  action,
-			Label:   label,
-		})
+		if m.worker != nil {
+			m.worker.Submit(&triage.Job{
+				Account: can.Thread.Account,
+				Threads: threads,
+				Action:  action,
+				Label:   label,
+			})
+		}
 	}
 
 	// Remove handled candidates. wholeCohort removes every cohort member.
