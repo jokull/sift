@@ -153,13 +153,13 @@ func (m *appModel) applyDecision(idx int, action model.Action, wholeCohort bool)
 		if m.store != nil {
 			switch action {
 			case model.ActionKeep:
-				_ = m.store.AddWhitelist(can.Thread.SenderKey())
-				_ = m.store.SaveSenderDecision(can.Thread.SenderKey(), model.ActionKeep)
+				_ = m.store.AddWhitelist(can.Thread.SenderGroup())
+				_ = m.store.SaveSenderDecision(can.Thread.SenderGroup(), model.ActionKeep)
 			case model.ActionUnsubscribe:
-				_ = m.store.AddUnsubscribed(can.Thread.SenderKey())
-				_ = m.store.SaveSenderDecision(can.Thread.SenderKey(), model.ActionUnsubscribe)
+				_ = m.store.AddUnsubscribed(can.Thread.SenderGroup())
+				_ = m.store.SaveSenderDecision(can.Thread.SenderGroup(), model.ActionUnsubscribe)
 			default:
-				_ = m.store.SaveSenderDecision(can.Thread.SenderKey(), action)
+				_ = m.store.SaveSenderDecision(can.Thread.SenderGroup(), action)
 			}
 		}
 	}

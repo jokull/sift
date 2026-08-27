@@ -108,7 +108,7 @@ func (e *Engine) loadThreads(ctx context.Context) ([]*model.Thread, []string, er
 		wg.Add(1)
 		go func(acct model.Account, src accounts.Source) {
 			defer wg.Done()
-			ts, err := src.ListThreads(ctx, 120)
+			ts, err := src.ListThreads(ctx, 200)
 			results <- res{acct, ts, err}
 		}(acct, src)
 	}
@@ -147,23 +147,25 @@ func (e *Engine) protectAndClassify(ctx context.Context, threads []*model.Thread
 
 	preds := e.classify(ctx, toClassify)
 
-	// Precompute sender cohorts over the non-protected set.
+	// Precompute sender cohorts over the non-protected set, grouped by logical
+	// sender (registered domain) so brand aliases aggregate together.
 	bySender := map[string][]*model.Thread{}
 	for _, t := range toClassify {
-		bySender[t.SenderKey()] = append(bySender[t.SenderKey()], t)
+		bySender[t.SenderGroup()] = append(bySender[t.SenderGroup()], t)
 	}
 
 	for _, t := range toClassify {
 		p := preds[t.ID]
+		group := t.SenderGroup()
 
 		// Whitelisted senders keep their promotions.
-		if e.store != nil && e.store.IsWhitelisted(t.SenderKey()) && p.Category == model.CategoryPromotion {
+		if e.store != nil && e.store.IsWhitelisted(group) && p.Category == model.CategoryPromotion {
 			p = model.Prediction{Category: model.CategoryPromotion, Action: model.ActionKeep,
 				Confidence: 1, Reason: "whitelisted sender", SenderWide: true}
 		}
 		// Remembered per-sender decision overrides the default.
 		if e.store != nil {
-			if act, ok, _ := e.store.SenderDecision(t.SenderKey()); ok {
+			if act, ok, _ := e.store.SenderDecision(group); ok {
 				if p.Category == model.CategoryPromotion || p.Category == model.CategoryTransactional {
 					switch act {
 					case model.ActionKeep, model.ActionArchive, model.ActionUnsubscribe:
@@ -191,8 +193,17 @@ func (e *Engine) protectAndClassify(ctx context.Context, threads []*model.Thread
 			plan.Stats.KeptInline++
 			// personal/meaningful — never asked, stays in inbox
 		default:
-			// promotion/transactional/actionable/unknown → decision window
-			cohort := bySender[t.SenderKey()]
+			// promotion/transactional/actionable/unknown → decision window.
+			// Cohort = non-today threads from the same sender group (registered
+			// domain) sharing the candidate's category, so brand aliases
+			// aggregate while unrelated mail (e.g. security alerts next to
+			// promotions on a shared domain) stays out of the bulk action.
+			cohort := make([]*model.Thread, 0, len(bySender[t.SenderGroup()]))
+			for _, ct := range bySender[t.SenderGroup()] {
+				if preds[ct.ID].Category == p.Category {
+					cohort = append(cohort, ct)
+				}
+			}
 			plan.Candidates = append(plan.Candidates, &Candidate{
 				Thread: t, Pred: p, Cohort: cohort,
 			})

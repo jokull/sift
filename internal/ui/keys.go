@@ -107,8 +107,8 @@ func (m *appModel) handleKeep(idx int) {
 	_ = c
 	can := m.candidates[idx]
 	if m.store != nil && (can.Pred.Category == model.CategoryPromotion || can.Pred.Category == model.CategoryTransactional) {
-		_ = m.store.AddWhitelist(can.Thread.SenderKey())
-		_ = m.store.SaveSenderDecision(can.Thread.SenderKey(), model.ActionKeep)
+		_ = m.store.AddWhitelist(can.Thread.SenderGroup())
+		_ = m.store.SaveSenderDecision(can.Thread.SenderGroup(), model.ActionKeep)
 	}
 	m.candidates = append(m.candidates[:idx], m.candidates[idx+1:]...)
 	if m.cursor >= len(m.candidates) {
