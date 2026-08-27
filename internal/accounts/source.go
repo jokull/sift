@@ -28,6 +28,9 @@ type Source interface {
 	// EnsureFolders creates any target labels/folders (Receipts/Reading) that do
 	// not yet exist, so actions have a destination.
 	EnsureFolders(ctx context.Context) error
+	// UnsubscribeInfo returns the parsed List-Unsubscribe header(s) for a thread,
+	// used to actually unsubscribe from a mailing list.
+	UnsubscribeInfo(ctx context.Context, thread *model.Thread) (*model.UnsubscribeInfo, error)
 }
 
 // New builds the configured sources. At least one account must be present.

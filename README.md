@@ -26,6 +26,13 @@ your rules:
 | **Actionable** (Sentry, errors, review) | shown for your eyes; bulk-archive after 24h |
 | **Personal / meaningful** | never asked about — stays in inbox |
 
+**Unsubscribe is real.** When you choose `unsubscribe` on a promotion/newsletter,
+`sift` reads the message's `List-Unsubscribe` header and performs a best-effort
+RFC 8058 **one-click unsubscribe** (POST, with `List-Unsubscribe-Post`), or a
+plain GET on the unsubscribe link, then archives the thread and remembers the
+sender. It uses each account's own mechanism (gog for Gmail, JMAP for Fastmail),
+and the result is shown in the actions HUD.
+
 Classification runs **DeepSeek v4 Flash** with reasoning disabled, so a batch of
 dozens of threads is classified in ~2s at minimal cost. Results are cached in
 `~/.local/share/sift/state.db`, so re-runs are instant. When DeepSeek is

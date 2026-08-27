@@ -6,6 +6,7 @@ import (
 
 	"github.com/jokull/sift/internal/accounts"
 	"github.com/jokull/sift/internal/model"
+	"github.com/jokull/sift/internal/unsub"
 )
 
 // Job is a unit of async work: move a set of threads (single account) per an
@@ -26,6 +27,7 @@ type Progress struct {
 	Failed  int
 	Active  bool
 	Err     string
+	Detail  string // optional human summary (e.g. unsubscribe result)
 }
 
 // Worker executes jobs asynchronously and streams Progress updates for the HUD.
@@ -131,12 +133,21 @@ func (w *Worker) run(job *Job) {
 	}
 
 	done, failed := 0, 0
+	var detail string
 	w.emit(Progress{Label: job.Label, Account: job.Account, Total: len(job.Threads), Active: true})
 	for _, th := range job.Threads {
 		if w.dryRun {
 			done++
 			w.emit(Progress{Label: job.Label, Account: job.Account, Total: len(job.Threads), Done: done, Failed: failed, Active: true})
 			continue
+		}
+		// Unsubscribe = actually request removal from the list, then archive.
+		if job.Action == model.ActionUnsubscribe {
+			if info, err := src.UnsubscribeInfo(w.ctx, th); err == nil && info != nil {
+				if r := unsub.Perform(w.ctx, info); r.Detail != "" {
+					detail = r.Detail
+				}
+			}
 		}
 		err := src.Apply(w.ctx, []*model.Thread{th}, job.Action)
 		if err != nil {
@@ -147,7 +158,7 @@ func (w *Worker) run(job *Job) {
 			w.emit(Progress{Label: job.Label, Account: job.Account, Total: len(job.Threads), Done: done, Failed: failed, Active: true})
 		}
 	}
-	w.emit(Progress{Label: job.Label, Account: job.Account, Total: len(job.Threads), Done: done, Failed: failed, Active: false})
+	w.emit(Progress{Label: job.Label, Account: job.Account, Total: len(job.Threads), Done: done, Failed: failed, Active: false, Detail: detail})
 }
 
 func (w *Worker) emit(p Progress) {

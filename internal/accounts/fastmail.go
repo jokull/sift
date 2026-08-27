@@ -10,6 +10,7 @@ import (
 	"github.com/jokull/sift/internal/config"
 	"github.com/jokull/sift/internal/jmap"
 	"github.com/jokull/sift/internal/model"
+	"github.com/jokull/sift/internal/unsub"
 )
 
 type fastmailSource struct {
@@ -226,6 +227,49 @@ func (s *fastmailSource) threadEmailIDs(ctx context.Context, threadID string) ([
 		}
 	}
 	return nil, nil
+}
+
+// UnsubscribeInfo reads the List-Unsubscribe header(s) from a JMAP thread.
+func (s *fastmailSource) UnsubscribeInfo(ctx context.Context, thread *model.Thread) (*model.UnsubscribeInfo, error) {
+	if thread == nil {
+		return unsub.ParseHeader("", ""), nil
+	}
+	ids, err := s.threadEmailIDs(ctx, thread.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return unsub.ParseHeader("", ""), nil
+	}
+	g := jmap.NewCall("Email/get", map[string]any{
+		"accountId": s.cfg.AccountID,
+		"ids":       []string{ids[0]},
+		"properties": []string{"header:List-Unsubscribe", "header:List-Unsubscribe-Post"},
+	}, "g0")
+	var env respEnvelope
+	if err := s.cli.Call(&env, g); err != nil {
+		return nil, err
+	}
+	for _, resp := range env.MethodResponses {
+		var name string
+		_ = json.Unmarshal(resp[0], &name)
+		if name != "Email/get" {
+			continue
+		}
+		var args struct {
+			List []struct {
+				LU  string `json:"header:List-Unsubscribe"`
+				LUP string `json:"header:List-Unsubscribe-Post"`
+			} `json:"list"`
+		}
+		if err := json.Unmarshal(resp[1], &args); err != nil {
+			return nil, err
+		}
+		if len(args.List) > 0 {
+			return unsub.ParseHeader(args.List[0].LU, args.List[0].LUP), nil
+		}
+	}
+	return unsub.ParseHeader("", ""), nil
 }
 
 // EnsureFolders verifies the Receipts and Reading mailboxes exist. Fastmail

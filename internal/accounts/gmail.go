@@ -12,6 +12,7 @@ import (
 	"github.com/jokull/sift/internal/gmailauth"
 	"github.com/jokull/sift/internal/gogd"
 	"github.com/jokull/sift/internal/model"
+	"github.com/jokull/sift/internal/unsub"
 )
 
 type gmailSource struct {
@@ -96,6 +97,49 @@ func (g *gmailSource) bridge(ctx context.Context, args ...string) (string, error
 	}
 	out, err := gogd.Call(ctx, gogd.DefaultSocket(), args...)
 	return out, err, true
+}
+
+// UnsubscribeInfo reads the List-Unsubscribe header(s) from a Gmail thread's
+// messages via gog.
+func (g *gmailSource) UnsubscribeInfo(ctx context.Context, thread *model.Thread) (*model.UnsubscribeInfo, error) {
+	if thread == nil {
+		return unsub.ParseHeader("", ""), nil
+	}
+	out, err := g.gog(ctx, "gmail", "thread", "get", thread.ID,
+		"-a", g.cfg.Account, "--results-only", "-j", "--no-input")
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Thread struct {
+			Messages []struct {
+				Payload struct {
+					Headers []struct {
+						Name  string `json:"name"`
+						Value string `json:"value"`
+					} `json:"headers"`
+				} `json:"payload"`
+			} `json:"messages"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return nil, fmt.Errorf("parse gog thread get: %w", err)
+	}
+	for _, msg := range resp.Thread.Messages {
+		var lu, lup string
+		for _, h := range msg.Payload.Headers {
+			switch strings.ToLower(h.Name) {
+			case "list-unsubscribe":
+				lu = h.Value
+			case "list-unsubscribe-post":
+				lup = h.Value
+			}
+		}
+		if lu != "" || lup != "" {
+			return unsub.ParseHeader(lu, lup), nil
+		}
+	}
+	return unsub.ParseHeader("", ""), nil
 }
 
 // gmailThread mirrors the gog `gmail search` JSON rows.

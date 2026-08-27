@@ -60,3 +60,13 @@ type Candidate struct {
 
 // Descriptor summarizes a candidate for a single decision line.
 func (c *Candidate) CohortCount() int { return len(c.SenderCohort) }
+
+// UnsubscribeInfo carries the parsed List-Unsubscribe header(s) from a message,
+// used to actually unsubscribe from a mailing list (RFC 8058 one-click where
+// available).
+type UnsubscribeInfo struct {
+	URLs     []string // candidate unsubscribe URLs (https)
+	Mailto   string   // mailto address from List-Unsubscribe, if any
+	OneClick bool     // List-Unsubscribe-Post: List-Unsubscribe=One-Click
+	Raw      string   // the raw value of the header
+}

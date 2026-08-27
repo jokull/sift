@@ -308,6 +308,8 @@ func taskLine(p triage.Progress, label string) string {
 	)
 	if !p.Active && p.Failed > 0 {
 		line += "  " + dimStyle.Render(truncateRunewidth(p.Err, 22))
+	} else if !p.Active && p.Detail != "" {
+		line += "  " + accentStyle.Render(truncateRunewidth(p.Detail, 40))
 	}
 	return line
 }
