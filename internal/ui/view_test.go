@@ -20,7 +20,10 @@ func TestRenderListAndDetail(t *testing.T) {
 			{Thread: &model.Thread{ID: "2", Account: model.AccountFastmail, Subject: "New letter from friend", FromEmail: "friend@y.com", Date: now.Add(-5 * time.Hour)}, Pred: model.Prediction{Category: model.CategoryKeep, Action: model.ActionKeep, Confidence: 0.8}},
 		},
 		today:   []*model.Thread{{ID: "3", Account: model.AccountFastmail, Date: now}},
-		progress: map[string]triage.Progress{"gmail → archive": {Label: "gmail → archive", Account: model.AccountGmail, Total: 5, Done: 2, Active: true}},
+		progress: map[string]triage.Progress{
+			"gmail → archive": {Label: "gmail → archive", Account: model.AccountGmail, Total: 5, Done: 2, Active: true},
+			"fastmail → receipts": {Label: "fastmail → receipts", Account: model.AccountFastmail, Total: 15, Done: 15},
+		},
 	}
 	out := m.View()
 	if out == "" {
@@ -29,8 +32,11 @@ func TestRenderListAndDetail(t *testing.T) {
 	if !strings.Contains(out, "sift") || !strings.Contains(out, "Your invoice") {
 		t.Fatalf("view missing content:\n%s", out)
 	}
-	if !strings.Contains(out, "archive") {
-		t.Fatalf("HUD missing:\n%s", out)
+	if !strings.Contains(out, "in progress") || !strings.Contains(out, "confirmed") {
+		t.Fatalf("task footer missing state counters:\n%s", out)
+	}
+	if !strings.Contains(out, "1 in progress · 1 confirmed") {
+		t.Fatalf("task footer missing aggregate counter:\n%s", out)
 	}
 
 	// Detail overlay.

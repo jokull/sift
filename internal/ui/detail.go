@@ -26,7 +26,7 @@ func (d *detailModel) render() string {
 	lines := []string{}
 
 	lines = append(lines, headerStyle.Render("── decision ──"))
-	lines = append(lines, titleStyle.Render(truncate(t.Subject, 60)))
+	lines = append(lines, titleStyle.Render(truncateRunewidth(t.Subject, 60)))
 	lines = append(lines, fmt.Sprintf("from:     %s", accountStyle[t.Account].Render(accountTag(t.Account))+" "+t.FromName+" <"+t.FromEmail+">"))
 	lines = append(lines, fmt.Sprintf("cats:     %s", clusterCats(can.Cohort)))
 	if can.CohortCount() > 0 {

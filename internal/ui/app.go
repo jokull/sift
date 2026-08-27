@@ -25,17 +25,18 @@ type appModel struct {
 	autoJobs   []triage.AutoJob
 	today      []*model.Thread
 	stats      triage.Stats
+	warnings   []string
 
 	cursor int
 
 	detail *detailModel
 
-	progress  map[string]triage.Progress // by label
-	status    string
-	quitting  bool
-	width     int
-	height    int
-	now       time.Time
+	progress map[string]triage.Progress // by label
+	help     bool
+	quitting bool
+	width    int
+	height   int
+	now      time.Time
 }
 
 type loadedMsg struct{ plan *triage.Plan }
@@ -94,27 +95,17 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.autoJobs = msg.plan.Auto
 		m.today = msg.plan.Today
 		m.stats = msg.plan.Stats
+		m.warnings = msg.plan.Warnings
 		m.loadingMsg = ""
-		m.status = planStatus(msg.plan)
-		if len(msg.plan.Warnings) > 0 {
-			m.status += "  ·  ⚠ " + msg.plan.Warnings[0]
-		}
 		m.submitAutoJobs()
 		return m, m.waitProgress()
 	case errMsg:
 		m.loadingMsg = ""
-		m.status = "ERROR: " + msg.err.Error()
+		m.warnings = []string{"ERROR: " + msg.err.Error()}
 		return m, m.waitProgress()
 	case progressMsg:
 		u := msg.u
 		m.progress[u.Label] = u
-		if u.Active {
-			m.status = fmt.Sprintf("%s %d/%d", u.Label, u.Done, u.Total)
-		} else if u.Failed > 0 {
-			m.status = fmt.Sprintf("%s done (%d failed)", u.Label, u.Failed)
-		} else {
-			m.status = fmt.Sprintf("%s done", u.Label)
-		}
 		return m, m.waitProgress()
 	case tickMsg:
 		return m, m.waitProgress()

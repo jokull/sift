@@ -10,7 +10,7 @@ func (m *appModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.quit()
 	}
 	if msg.String() == "help" || msg.String() == "?" {
-		m.status = "navigate ↑/↓ or j/k · ⏎ detail · a archive · u unsubscribe · r receipts · n reading · s keep · shift = whole sender · b back · q quit"
+		m.help = !m.help
 		return m, m.waitProgress()
 	}
 
