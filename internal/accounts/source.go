@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
+	"strconv"
 
 	"github.com/jokull/sift/internal/config"
 	"github.com/jokull/sift/internal/model"
@@ -64,6 +66,20 @@ func execGogEnv(ctx context.Context, gogBin string, env []string, args ...string
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// execGogAsUser runs gog in the user's login (GUI) session via `launchctl asuser`
+// on macOS, so it can read the login keychain token even from SSH. This mirrors
+// OpenClaw, whose launchd-spawned gog has keychain access. On non-macOS it falls
+// back to running gog directly.
+func execGogAsUser(ctx context.Context, gogBin string, args ...string) (string, error) {
+	if runtime.GOOS != "darwin" {
+		return execGog(ctx, gogBin, args...)
+	}
+	cmdArgs := append([]string{"asuser", strconv.Itoa(os.Getuid()), gogBin}, args...)
+	cmd := exec.CommandContext(ctx, "launchctl", cmdArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

@@ -165,8 +165,11 @@ func runSetup() {
 	runGmailSetup()
 }
 
-// runGmailSetup prepares Gmail for SSH by wiring gog's OAuth client credentials
-// into the config and telling the user how to supply an access token.
+// runGmailSetup prepares Gmail for SSH. sift runs gog in your login (GUI) session
+// via `launchctl asuser` — the same mechanism OpenClaw uses — so Gmail usually
+// works over SSH with no extra credential, because the login keychain is
+// unlocked. This command only needs to run if that's unavailable, in which case
+// it wires gog's OAuth client creds into the config and shows the options.
 func runGmailSetup() {
 	path := config.DefaultConfigPath()
 	cfg, err := config.Load(path)
@@ -179,16 +182,18 @@ func runGmailSetup() {
 		return
 	}
 
+	fmt.Println("Gmail is accessed by running gog in your login (GUI) session")
+	fmt.Println("(launchctl asuser) so it can read the login keychain — same as OpenClaw.")
+	fmt.Println("This usually works over SSH with no credential. Try `./sift` first.")
+	fmt.Println("")
+	fmt.Println("If the login keychain is locked/absent, add ONE of these to the [gmail] section:")
+
 	// Seed the OAuth client credentials from gog if we can.
 	clientID, clientSecret, cerr := config.ReadGogClientCredentials()
-	if cerr != nil || clientID == "" {
-		fmt.Println("Gmail over SSH needs a Google Workspace credential. Two options:")
-	} else {
+	if cerr == nil && clientID != "" {
 		_ = config.WriteGmailClient(path, clientID, clientSecret)
-		fmt.Printf("Gog OAuth client id/secret written to %s.\n", path)
-		fmt.Println("Gmail over SSH needs a Google OAuth credential. Add ONE of these to the [gmail] section:")
+		fmt.Printf("\n  (gog's OAuth client id/secret written to %s)\n", path)
 	}
-
 	fmt.Println("")
 	fmt.Println("  1) Workspace service account (recommended, no expiry):")
 	fmt.Println("     - Create a service account in the Google Cloud Console (IAM & Admin > Service Accounts).")
@@ -206,7 +211,7 @@ func runGmailSetup() {
 	fmt.Println("")
 	fmt.Println("  3) Short-lived access token (~1h, quick test):")
 	fmt.Println(`         [gmail]`)
-	fmt.Println(`         access_token = "<run: gog auth doctor in your desktop to refresh, then set>"`)
+	fmt.Println(`         access_token = "..."`)
 }
 
 func runUI(dryRun bool) error {
