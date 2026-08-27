@@ -89,10 +89,26 @@ sift setup        # once, from a desktop/GUI session: writes the Fastmail JMAP
 ```
 
 After that, `sift` reads the Fastmail token from the config file and no longer
-needs the keychain. Gmail still goes through `gog`; if its keychain token is
-also unavailable over SSH, `sift` degrades gracefully — it loads the Fastmail
-inbox and prints a warning, and you can supply a Gmail access token via
-`[gmail] access_token` (a ~1h token) in the config to restore it.
+needs the keychain. Gmail still goes through `gog`, which reads its OAuth token
+from the macOS keychain — **also unavailable over SSH**, so `gog` will report
+`No auth for gmail ...`. `sift` degrades gracefully (it still loads Fastmail and
+prints a warning), and you restore Gmail over SSH by giving `sift` its own
+Gmail access token via `sift setup gmail`:
+
+```bash
+sift setup gmail     # wires gog's OAuth client creds into the config, then shows options
+```
+
+Then add **one** of these under `[gmail]` in `~/.config/sift/config.toml`:
+
+- **Workspace service account (recommended, no expiry):** create a service
+  account, enable domain-wide delegation for its client_id with scope
+  `https://mail.google.com/`, then set
+  `service_account_json = "/path/to/service-account.json"`. `sift` mints an
+  access token from it and hands it to `gog`, so it works over SSH.
+- **OAuth refresh token:** set `refresh_token = "..."` (uses the `client_id` /
+  `client_secret` that `sift setup gmail` wrote).
+- **Short-lived access token (~1h, quick test):** set `access_token = "..."`.
 
 The values in `~/.config/sift/config.toml` are machine-local; back them up with
 your dotfiles, not the repo.

@@ -33,9 +33,11 @@
 # inbox_label = "INBOX"
 # receipts_label = "Receipts"
 # reading_label = "Reading"
-# -- Optional: a short-lived Gmail access token if the gog keychain token isn't
-# -- available in this session (set via `gog auth status`, expires in ~1h).
-# access_token = ""
+# -- Gmail over SSH (macOS keychain is locked). Add ONE of these; `sift setup gmail`
+# -- writes the client_id/client_secret and shows all options:
+# service_account_json = "/path/to/service-account.json"   # Workspace domain-wide delegation (no expiry)
+# refresh_token      = "..."                               # OAuth refresh token (uses client_id/client_secret above)
+# access_token       = "..."                               # short-lived ~1h token (quick test)
 
 # Senders whose promotions are kept (never archived). Add one per line.
 # whitelist = ["friend@example.com"]

@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -49,8 +50,15 @@ type GmailConfig struct {
 	InboxLabel    string `json:"inbox_label"`
 	ReceiptsLabel string `json:"receipts_label"`
 	ReadingLabel  string `json:"reading_label"`
-	AccessToken   string `json:"access_token,omitempty"` // optional GOG_ACCESS_TOKEN override (short-lived)
-	EnsureLabels  bool   `json:"-"`
+
+	// Auth for direct Gmail access over SSH (bypasses gog's macOS keychain).
+	AccessToken   string `json:"access_token,omitempty"`   // short-lived (~1h)
+	ServiceAccount string `json:"service_account_json,omitempty"` // path to Workspace SA key (domain-wide delegation)
+	ClientID      string `json:"client_id,omitempty"`
+	ClientSecret  string `json:"client_secret,omitempty"`
+	RefreshToken  string `json:"refresh_token,omitempty"`
+
+	EnsureLabels bool `json:"-"`
 }
 
 // FileConfig mirrors Config for a tolerant, partial override file. Empty
@@ -65,12 +73,16 @@ type FileConfig struct {
 		Folders  Folders `toml:"folders"`
 	} `toml:"fastmail"`
 	Gmail *struct {
-		Account       string `toml:"account"`
-		GogBin        string `toml:"gog_bin"`
-		InboxLabel    string `toml:"inbox_label"`
-		ReceiptsLabel string `toml:"receipts_label"`
-		ReadingLabel  string `toml:"reading_label"`
-		AccessToken   string `toml:"access_token"`
+		Account        string `toml:"account"`
+		GogBin         string `toml:"gog_bin"`
+		InboxLabel     string `toml:"inbox_label"`
+		ReceiptsLabel  string `toml:"receipts_label"`
+		ReadingLabel   string `toml:"reading_label"`
+		AccessToken    string `toml:"access_token"`
+		ServiceAccount string `toml:"service_account_json"`
+		ClientID       string `toml:"client_id"`
+		ClientSecret   string `toml:"client_secret"`
+		RefreshToken   string `toml:"refresh_token"`
 	} `toml:"gmail"`
 	Whitelist []string `toml:"whitelist"`
 }
@@ -256,6 +268,18 @@ func applyFile(cfg *Config, f *FileConfig) {
 		if f.Gmail.AccessToken != "" {
 			cfg.Gmail.AccessToken = f.Gmail.AccessToken
 		}
+		if f.Gmail.ServiceAccount != "" {
+			cfg.Gmail.ServiceAccount = f.Gmail.ServiceAccount
+		}
+		if f.Gmail.ClientID != "" {
+			cfg.Gmail.ClientID = f.Gmail.ClientID
+		}
+		if f.Gmail.ClientSecret != "" {
+			cfg.Gmail.ClientSecret = f.Gmail.ClientSecret
+		}
+		if f.Gmail.RefreshToken != "" {
+			cfg.Gmail.RefreshToken = f.Gmail.RefreshToken
+		}
 	}
 	if len(f.Whitelist) > 0 {
 		cfg.Whitelist = f.Whitelist
@@ -358,10 +382,44 @@ func ReadFastmailToken() (string, error) {
 	return token, nil
 }
 
+// ReadGogClientCredentials returns gog's OAuth client id/secret from the gogcli
+// credentials file, used to configure the refresh-token path over SSH.
+func ReadGogClientCredentials() (clientID, clientSecret string, err error) {
+	home, _ := os.UserHomeDir()
+	path := filepath.Join(home, "Library", "Application Support", "gogcli", "credentials.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", err
+	}
+	var c struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		return "", "", err
+	}
+	return c.ClientID, c.ClientSecret, nil
+}
+
 // WriteFastmailToken persists the JMAP token into the sift config file, merging
 // it into an existing [fastmail] section (or appending one). This lets sift run
 // without the keychain, which is often unavailable over SSH.
 func WriteFastmailToken(path, token string) error {
+	return upsertConfigKey(path, "fastmail", "token", token)
+}
+
+// WriteGmailClient persists gog's OAuth client id/secret into the [gmail]
+// section of the config, so the refresh-token path is ready over SSH.
+func WriteGmailClient(path, clientID, clientSecret string) error {
+	if err := upsertConfigKey(path, "gmail", "client_id", clientID); err != nil {
+		return err
+	}
+	return upsertConfigKey(path, "gmail", "client_secret", clientSecret)
+}
+
+// upsertConfigKey sets a single `key = "value"` inside a TOML section, creating
+// the section if needed and preserving the rest of the file.
+func upsertConfigKey(path, section, key, value string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -370,22 +428,22 @@ func WriteFastmailToken(path, token string) error {
 
 	out := []string{}
 	inserted := false
-	inFastmail := false
+	inSection := false
 	for _, ln := range lines {
 		t := strings.TrimSpace(ln)
 		isSection := strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]") && !strings.HasPrefix(t, "[[")
 		if isSection {
-			inFastmail = t == "[fastmail]"
+			inSection = t == "["+section+"]"
 			out = append(out, ln)
-			if inFastmail && !inserted {
-				out = append(out, `token = "`+tomlEscape(token)+`"`)
+			if inSection && !inserted {
+				out = append(out, key+" = "+tomlQuote(value))
 				inserted = true
 			}
 			continue
 		}
-		if inFastmail {
-			if strings.HasPrefix(t, "token") {
-				continue // drop a stale token; a fresh one was inserted above
+		if inSection {
+			if strings.HasPrefix(t, key+" ") || strings.HasPrefix(t, key+"=") {
+				continue // drop a stale value; the fresh one was inserted above
 			}
 			if t == "" && !inserted {
 				continue
@@ -397,9 +455,13 @@ func WriteFastmailToken(path, token string) error {
 		if len(out) > 0 && out[len(out)-1] != "" {
 			out = append(out, "")
 		}
-		out = append(out, "[fastmail]", `token = "`+tomlEscape(token)+`"`)
+		out = append(out, "["+section+"]", key+" = "+tomlQuote(value))
 	}
 	return os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o600)
+}
+
+func tomlQuote(s string) string {
+	return `"` + tomlEscape(s) + `"`
 }
 
 func tomlEscape(s string) string {

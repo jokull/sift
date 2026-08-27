@@ -38,7 +38,11 @@ func main() {
 			runPlan()
 			return
 		case "setup":
-			runSetup()
+			if len(os.Args) > 2 && os.Args[2] == "gmail" {
+				runGmailSetup()
+			} else {
+				runSetup()
+			}
 			return
 		case "help", "-h", "--help":
 			fmt.Println("usage: sift [list|doctor|plan|setup|--dry-run]")
@@ -158,6 +162,51 @@ func runSetup() {
 	fmt.Printf("Wrote Fastmail JMAP token for %s into:\n  %s\n", user, path)
 	fmt.Println("sift will now use the config token and no longer needs the keychain.")
 	fmt.Println("(Add ~/.config/sift/config.toml to your dotfiles backup, not the repo.)")
+	runGmailSetup()
+}
+
+// runGmailSetup prepares Gmail for SSH by wiring gog's OAuth client credentials
+// into the config and telling the user how to supply an access token.
+func runGmailSetup() {
+	path := config.DefaultConfigPath()
+	cfg, err := config.Load(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sift setup gmail: "+err.Error())
+	}
+
+	if cfg.Gmail != nil && (cfg.Gmail.RefreshToken != "" || cfg.Gmail.ServiceAccount != "" || cfg.Gmail.AccessToken != "") {
+		fmt.Println("Gmail auth is already configured in the config file.")
+		return
+	}
+
+	// Seed the OAuth client credentials from gog if we can.
+	clientID, clientSecret, cerr := config.ReadGogClientCredentials()
+	if cerr != nil || clientID == "" {
+		fmt.Println("Gmail over SSH needs a Google Workspace credential. Two options:")
+	} else {
+		_ = config.WriteGmailClient(path, clientID, clientSecret)
+		fmt.Printf("Gog OAuth client id/secret written to %s.\n", path)
+		fmt.Println("Gmail over SSH needs a Google OAuth credential. Add ONE of these to the [gmail] section:")
+	}
+
+	fmt.Println("")
+	fmt.Println("  1) Workspace service account (recommended, no expiry):")
+	fmt.Println("     - Create a service account in the Google Cloud Console (IAM & Admin > Service Accounts).")
+	fmt.Println("     - In Workspace admin > Security > Access control > API controls, enable")
+	fmt.Println("       'Allow domain-wide delegation' and add the SA client_id with scope")
+	fmt.Println("       https://mail.google.com/ .")
+	fmt.Println("     - Add to the config:")
+	fmt.Println(`         [gmail]`)
+	fmt.Println(`         service_account_json = "/path/to/service-account.json"`)
+	fmt.Println("")
+	fmt.Println("  2) OAuth refresh token (from your own Google Cloud OAuth client + consent):")
+	fmt.Println(`         [gmail]`)
+	fmt.Println(`         refresh_token = "..."`)
+	fmt.Println("         (client_id / client_secret are written above from gog's credentials)")
+	fmt.Println("")
+	fmt.Println("  3) Short-lived access token (~1h, quick test):")
+	fmt.Println(`         [gmail]`)
+	fmt.Println(`         access_token = "<run: gog auth doctor in your desktop to refresh, then set>"`)
 }
 
 func runUI(dryRun bool) error {

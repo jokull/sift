@@ -9,11 +9,16 @@ import (
 	"time"
 
 	"github.com/jokull/sift/internal/config"
+	"github.com/jokull/sift/internal/gmailauth"
 	"github.com/jokull/sift/internal/model"
 )
 
 type gmailSource struct {
 	cfg *config.GmailConfig
+
+	haveAuth bool
+	authTok  string
+	authErr  error
 }
 
 func newGmail(cfg *config.GmailConfig) (*gmailSource, error) {
@@ -25,11 +30,46 @@ func newGmail(cfg *config.GmailConfig) (*gmailSource, error) {
 
 func (g *gmailSource) Account() model.Account { return model.AccountGmail }
 
-// gog runs the CLI, injecting GOG_ACCESS_TOKEN when one is configured (for SSH
-// sessions where the gog keychain token is unavailable).
+// ensureToken resolves a Gmail access token from config or mints one from a
+// service account / refresh token, so gog can run over SSH without the macOS
+// keychain. An empty token means "let gog use its own keychain token".
+func (g *gmailSource) ensureToken(ctx context.Context) (string, error) {
+	if g.haveAuth {
+		return g.authTok, g.authErr
+	}
+	defer func() { g.haveAuth = true }()
+
+	if tok := strings.TrimSpace(g.cfg.AccessToken); tok != "" {
+		g.authTok, g.authErr = tok, nil
+		return tok, nil
+	}
+	if sa := strings.TrimSpace(g.cfg.ServiceAccount); sa != "" {
+		key, err := gmailauth.ReadServiceAccountFile(sa)
+		if err != nil {
+			g.authErr = fmt.Errorf("read service account %q: %w", sa, err)
+			return "", g.authErr
+		}
+		tok, err := gmailauth.NewServiceAccountToken(ctx, key, g.cfg.Account)
+		g.authTok, g.authErr = tok, err
+		return g.authTok, g.authErr
+	}
+	if rt := strings.TrimSpace(g.cfg.RefreshToken); rt != "" && g.cfg.ClientID != "" {
+		tok, err := gmailauth.RefreshAccessToken(ctx, g.cfg.ClientID, g.cfg.ClientSecret, rt)
+		g.authTok, g.authErr = tok, err
+		return g.authTok, g.authErr
+	}
+	g.authTok, g.authErr = "", nil
+	return "", nil
+}
+
+// gog runs the CLI, injecting GOG_ACCESS_TOKEN when sift can supply one (service
+// account / refresh token / literal), which bypasses gog's macOS keychain so it
+// works over SSH.
 func (g *gmailSource) gog(ctx context.Context, args ...string) (string, error) {
-	if g.cfg.AccessToken != "" {
-		return execGogEnv(ctx, g.cfg.GogBin, []string{"GOG_ACCESS_TOKEN=" + g.cfg.AccessToken}, args...)
+	if tok, err := g.ensureToken(ctx); err != nil {
+		return "", err
+	} else if tok != "" {
+		return execGogEnv(ctx, g.cfg.GogBin, []string{"GOG_ACCESS_TOKEN=" + tok}, args...)
 	}
 	return execGog(ctx, g.cfg.GogBin, args...)
 }
@@ -192,16 +232,19 @@ func classifyGogError(op string, err error, out string) error {
 	return fmt.Errorf("%s: %w (%s)", op, err, truncate(msg, 300))
 }
 
-// gogHint wraps a gog failure with SSH remediation when the cause looks like a
-// keychain/credential access problem, which is common over SSH.
+// gogHint wraps a gog failure with remediation when the cause looks like a
+// credential/keychain access problem, which is common over SSH.
 func gogHint(op string, err error, out string) error {
 	base := classifyGogError(op, err, out)
 	msg := strings.ToLower(out + " " + err.Error())
-	if strings.Contains(msg, "keychain") || strings.Contains(msg, "credential") ||
-		strings.Contains(msg, "interaction") || strings.Contains(msg, "keyring") {
-		return fmt.Errorf("%w — gog couldn't read its Gmail token from the macOS keychain. Over SSH, set [gmail] access_token (a ~1h token from `gog` in your desktop session) or run sift from a GUI session.", base)
+	switch {
+	case strings.Contains(msg, "no auth") || strings.Contains(msg, "keychain") ||
+		strings.Contains(msg, "credential") || strings.Contains(msg, "keyring") ||
+		strings.Contains(msg, "interaction") || strings.Contains(msg, "not allowed"):
+		return fmt.Errorf("%w — gog couldn't access its Gmail token. Over SSH the macOS keychain is locked; add one of these to %s and rerun: [gmail] service_account_json = \"<workspace service-account key>\", [gmail] refresh_token (with client_id/client_secret), or a short-lived [gmail] access_token.", base, config.DefaultConfigPath())
+	default:
+		return base
 	}
-	return base
 }
 
 func truncate(s string, n int) string {
