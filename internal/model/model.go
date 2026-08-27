@@ -1,10 +1,7 @@
 // Package model defines the account-agnostic types shared across sift.
 package model
 
-import (
-	"strings"
-	"time"
-)
+import "time"
 
 // Account identifies a connected mail account.
 type Account string
@@ -36,31 +33,6 @@ func (t *Thread) SenderKey() string {
 		return t.FromEmail
 	}
 	return t.FromName
-}
-
-// SenderGroup is the normalized "logical sender" used for cohort aggregation and
-// per-sender decisions. It collapses campaign/ESP aliases (no-reply@email.apple.com
-// vs updates@apple.com) onto their registered domain so "how many from this sender"
-// reflects the brand, not a one-off address. Falls back to the display name.
-func (t *Thread) SenderGroup() string {
-	if t.FromEmail != "" {
-		at := strings.LastIndex(t.FromEmail, "@")
-		if at >= 0 {
-			return baseDomain(strings.ToLower(t.FromEmail[at+1:]))
-		}
-		return strings.ToLower(t.FromEmail)
-	}
-	return strings.ToLower(t.FromName)
-}
-
-// baseDomain returns the registered domain (last two labels) of a host, which
-// groups subdomains like email.apple.com and news.apple.com under apple.com.
-func baseDomain(host string) string {
-	labels := strings.Split(host, ".")
-	if len(labels) >= 2 {
-		return labels[len(labels)-2] + "." + labels[len(labels)-1]
-	}
-	return host
 }
 
 // IsToday reports whether the thread's most recent message arrived on the given

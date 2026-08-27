@@ -71,21 +71,21 @@ func TestBulkArchiveRemovesCohortOptimistically(t *testing.T) {
 	m := &appModel{
 		loaded: true, now: now, width: 100, height: 40,
 		candidates: []*triage.Candidate{
-			mk("1", "a@google.com", model.CategoryPromotion),
-			mk("2", "b@google.com", model.CategoryPromotion),
-			mk("3", "c@apple.com", model.CategoryPromotion),   // different domain → stays
-			mk("4", "d@google.com", model.CategoryTransactional), // different category → stays
+			mk("1", "no-reply@esp.com", model.CategoryPromotion),    // in cohort (same sender+cat)
+			mk("2", "no-reply@esp.com", model.CategoryPromotion),    // in cohort
+			mk("3", "other@esp.com", model.CategoryPromotion),       // different sender → stays
+			mk("4", "no-reply@esp.com", model.CategoryTransactional), // same sender, diff cat → stays
 		},
 		progress: map[string]triage.Progress{},
 	}
 
 	m.applyDecision(0, model.ActionArchive, true)
 	if len(m.candidates) != 2 {
-		t.Fatalf("expected 2 candidates left after bulk archive, got %d", len(m.candidates))
+		t.Fatalf("expected 2 candidates left after bulk archive, got %d: %+v", len(m.candidates), m.candidates)
 	}
 	for _, c := range m.candidates {
-		if c.Thread.SenderGroup() == "google.com" && c.Pred.Category == model.CategoryPromotion {
-			t.Fatalf("cohort row not removed: %s", c.Thread.ID)
+		if c.Thread.FromEmail == "no-reply@esp.com" && c.Pred.Category == model.CategoryPromotion {
+			t.Fatalf("cohort row not removed: %s/%s", c.Thread.ID, c.Pred.Category)
 		}
 	}
 }

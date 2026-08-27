@@ -147,25 +147,27 @@ func (e *Engine) protectAndClassify(ctx context.Context, threads []*model.Thread
 
 	preds := e.classify(ctx, toClassify)
 
-	// Precompute sender cohorts over the non-protected set, grouped by logical
-	// sender (registered domain) so brand aliases aggregate together.
+	// Precompute sender cohorts over the non-protected (loaded) set, keyed by the
+	// exact sender so a cohort spans the whole loaded inbox (not just the rows
+	// visible in the list). Each cohort is scoped to the candidate's category so
+	// a bulk action never drags in unmatching mail (e.g. receipts next to promos).
 	bySender := map[string][]*model.Thread{}
 	for _, t := range toClassify {
-		bySender[t.SenderGroup()] = append(bySender[t.SenderGroup()], t)
+		bySender[t.SenderKey()] = append(bySender[t.SenderKey()], t)
 	}
 
 	for _, t := range toClassify {
 		p := preds[t.ID]
-		group := t.SenderGroup()
+		key := t.SenderKey()
 
 		// Whitelisted senders keep their promotions.
-		if e.store != nil && e.store.IsWhitelisted(group) && p.Category == model.CategoryPromotion {
+		if e.store != nil && e.store.IsWhitelisted(key) && p.Category == model.CategoryPromotion {
 			p = model.Prediction{Category: model.CategoryPromotion, Action: model.ActionKeep,
 				Confidence: 1, Reason: "whitelisted sender", SenderWide: true}
 		}
 		// Remembered per-sender decision overrides the default.
 		if e.store != nil {
-			if act, ok, _ := e.store.SenderDecision(group); ok {
+			if act, ok, _ := e.store.SenderDecision(key); ok {
 				if p.Category == model.CategoryPromotion || p.Category == model.CategoryTransactional {
 					switch act {
 					case model.ActionKeep, model.ActionArchive, model.ActionUnsubscribe:
@@ -198,8 +200,8 @@ func (e *Engine) protectAndClassify(ctx context.Context, threads []*model.Thread
 			// domain) sharing the candidate's category, so brand aliases
 			// aggregate while unrelated mail (e.g. security alerts next to
 			// promotions on a shared domain) stays out of the bulk action.
-			cohort := make([]*model.Thread, 0, len(bySender[t.SenderGroup()]))
-			for _, ct := range bySender[t.SenderGroup()] {
+			cohort := make([]*model.Thread, 0, len(bySender[t.SenderKey()]))
+			for _, ct := range bySender[t.SenderKey()] {
 				if preds[ct.ID].Category == p.Category {
 					cohort = append(cohort, ct)
 				}

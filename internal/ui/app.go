@@ -149,13 +149,13 @@ func (m *appModel) applyDecision(idx int, action model.Action, wholeCohort bool)
 		if m.store != nil {
 			switch action {
 			case model.ActionKeep:
-				_ = m.store.AddWhitelist(can.Thread.SenderGroup())
-				_ = m.store.SaveSenderDecision(can.Thread.SenderGroup(), model.ActionKeep)
+				_ = m.store.AddWhitelist(can.Thread.SenderKey())
+				_ = m.store.SaveSenderDecision(can.Thread.SenderKey(), model.ActionKeep)
 			case model.ActionUnsubscribe:
-				_ = m.store.AddUnsubscribed(can.Thread.SenderGroup())
-				_ = m.store.SaveSenderDecision(can.Thread.SenderGroup(), model.ActionUnsubscribe)
+				_ = m.store.AddUnsubscribed(can.Thread.SenderKey())
+				_ = m.store.SaveSenderDecision(can.Thread.SenderKey(), model.ActionUnsubscribe)
 			default:
-				_ = m.store.SaveSenderDecision(can.Thread.SenderGroup(), action)
+				_ = m.store.SaveSenderDecision(can.Thread.SenderKey(), action)
 			}
 		}
 	}
@@ -164,10 +164,10 @@ func (m *appModel) applyDecision(idx int, action model.Action, wholeCohort bool)
 	// whole-cohort/hulk action — every row sharing the same sender-group+category.
 	var handled []*triage.Candidate
 	if wholeCohort {
-		group := can.Thread.SenderGroup()
+		group := can.Thread.SenderKey()
 		cat := can.Pred.Category
 		for _, c := range m.candidates {
-			if c.Thread.SenderGroup() == group && c.Pred.Category == cat {
+			if c.Thread.SenderKey() == group && c.Pred.Category == cat {
 				handled = append(handled, c)
 			}
 		}

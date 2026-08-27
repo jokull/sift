@@ -53,10 +53,10 @@ sift list            # print the merged inbox threads (read-only)
 
 The list shows threads needing a decision, newest first. Each row is a decision
 **window**: its AI-suggested action, sender, subject, account, age, and how many
-threads from that sender would be affected (`×N`). The `×N` cohort groups by the
-sender's **registered domain + category**, so a brand's campaign aliases
-aggregate into one meaningful count (e.g. all Apple promo threads) while
-unrelated mail on a shared domain stays out.
+threads from that sender would be affected (`×N`). The `×N` cohort counts threads
+from the same sender **across the whole loaded inbox** (not just the rows visible
+in the list), scoped to that thread's category so a bulk action never drags in
+unmatching mail (e.g. receipts next to a promo).
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
