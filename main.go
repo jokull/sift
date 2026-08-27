@@ -13,12 +13,17 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jokull/sift/internal/accounts"
 	"github.com/jokull/sift/internal/ai"
 	"github.com/jokull/sift/internal/config"
+	"github.com/jokull/sift/internal/gogd"
 	"github.com/jokull/sift/internal/model"
 	"github.com/jokull/sift/internal/state"
 	"github.com/jokull/sift/internal/triage"
@@ -40,12 +45,17 @@ func main() {
 		case "setup":
 			if len(os.Args) > 2 && os.Args[2] == "gmail" {
 				runGmailSetup()
+			} else if len(os.Args) > 2 && os.Args[2] == "daemon" {
+				runSetupDaemon()
 			} else {
 				runSetup()
 			}
 			return
+		case "daemon":
+			runDaemon()
+			return
 		case "help", "-h", "--help":
-			fmt.Println("usage: sift [list|doctor|plan|setup|--dry-run]")
+			fmt.Println("usage: sift [list|doctor|plan|setup [gmail|daemon]|daemon|--dry-run]")
 			return
 		}
 	}
@@ -139,6 +149,75 @@ func hasFlag(args []string, names ...string) bool {
 		}
 	}
 	return false
+}
+
+// runDaemon serves the gog bridge on a unix socket. It is meant to run as a
+// LaunchAgent in the user's login (GUI) session, where the login keychain is
+// unlocked — so gog (and therefore Gmail) is reachable headlessly from an SSH
+// sift session, exactly like OpenClaw's launchd gog.
+func runDaemon() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	cfg, err := config.Load(config.DefaultConfigPath())
+	if err != nil {
+		fatal("config: %v", err)
+	}
+	gogBin := "gog"
+	if cfg.Gmail != nil && cfg.Gmail.GogBin != "" {
+		gogBin = cfg.Gmail.GogBin
+	}
+	socket := gogd.DefaultSocket()
+	fmt.Fprintf(os.Stderr, "sift daemon: gog=%s socket=%s\n", gogBin, socket)
+	if err := gogd.NewServer(gogBin, socket).Serve(ctx); err != nil {
+		fatal("daemon: %v", err)
+	}
+}
+
+// runSetupDaemon installs a LaunchAgent so the gog bridge runs in the login
+// session (keychain unlocked) at login, with keep-alive.
+func runSetupDaemon() {
+	exe, err := os.Executable()
+	if err != nil {
+		fatal("executable: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	label := "ai.jokull.sift.gogd"
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", label+".plist")
+	logPath := filepath.Join(home, ".sift", "gogd.log")
+	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
+		fatal("mkdir LaunchAgents: %v", err)
+	}
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
+
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>%s</string>
+  <key>ProgramArguments</key><array>
+    <string>%s</string><string>daemon</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>%s</string>
+  <key>StandardErrorPath</key><string>%s</string>
+</dict></plist>`, label, xmlEscape(exe), logPath, logPath)
+
+	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
+		fatal("write plist: %v", err)
+	}
+	fmt.Printf("Installed LaunchAgent: %s\n", plistPath)
+	fmt.Printf("  (runs '%s daemon' in your login session; keep-alive on)\n", exe)
+	fmt.Println("Load it now with:")
+	fmt.Printf("  launchctl bootstrap gui/%d %s\n", os.Getuid(), plistPath)
+	fmt.Println("or log out/in. Then run sift from SSH and it will use the bridge automatically.")
+}
+
+func xmlEscape(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&apos;")
+	return r.Replace(s)
 }
 
 // runSetup makes sift usable over SSH, where the macOS login keychain is often

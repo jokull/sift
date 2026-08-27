@@ -10,15 +10,18 @@ import (
 
 	"github.com/jokull/sift/internal/config"
 	"github.com/jokull/sift/internal/gmailauth"
+	"github.com/jokull/sift/internal/gogd"
 	"github.com/jokull/sift/internal/model"
 )
 
 type gmailSource struct {
 	cfg *config.GmailConfig
 
-	haveAuth bool
-	authTok  string
-	authErr  error
+	haveAuth      bool
+	authTok       string
+	authErr       error
+	bridgeChecked bool
+	bridgeOK      bool
 }
 
 func newGmail(cfg *config.GmailConfig) (*gmailSource, error) {
@@ -62,19 +65,37 @@ func (g *gmailSource) ensureToken(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// gog runs gog for a Gmail operation. When sift has its own access token (from
-// config: service account / refresh token / literal) it injects it via
-// GOG_ACCESS_TOKEN, bypassing the keychain. Otherwise it runs gog in the user's
-// login (GUI) session via `launchctl asuser`, so gog can read its token from the
-// login keychain — the same mechanism OpenClaw uses (its launchd-spawned gog has
-// keychain access). This makes Gmail work over SSH with no extra credential.
+// gog runs gog for a Gmail operation, trying (in order): the headless gog
+// bridge (a login-session daemon with keychain access — OpenClaw's mechanism),
+// then a config-supplied access token, then a login-session run, then a direct
+// run. Callers wrap failures with an actionable hint.
 func (g *gmailSource) gog(ctx context.Context, args ...string) (string, error) {
+	if out, err, ok := g.bridge(ctx, args...); ok {
+		return out, err
+	}
 	if tok, err := g.ensureToken(ctx); err != nil {
 		return "", err
 	} else if tok != "" {
 		return execGogEnv(ctx, g.cfg.GogBin, []string{"GOG_ACCESS_TOKEN=" + tok}, args...)
 	}
-	return execGogAsUser(ctx, g.cfg.GogBin, args...)
+	if out, err := execGogAsUser(ctx, g.cfg.GogBin, args...); err == nil {
+		return out, nil
+	}
+	return execGog(ctx, g.cfg.GogBin, args...)
+}
+
+// bridge forwards a gog invocation to the login-session daemon if one is
+// reachable; the second return is true when the bridge handled the call.
+func (g *gmailSource) bridge(ctx context.Context, args ...string) (string, error, bool) {
+	if !g.bridgeChecked {
+		g.bridgeChecked = true
+		g.bridgeOK = gogd.Available(ctx, gogd.DefaultSocket())
+	}
+	if !g.bridgeOK {
+		return "", nil, false
+	}
+	out, err := gogd.Call(ctx, gogd.DefaultSocket(), args...)
+	return out, err, true
 }
 
 // gmailThread mirrors the gog `gmail search` JSON rows.
@@ -236,10 +257,9 @@ func classifyGogError(op string, err error, out string) error {
 }
 
 // gogHint wraps a gog failure with remediation when the cause looks like a
-// credential/keychain access problem. sift runs gog in the user's login session
-// via `launchctl asuser` (like OpenClaw's launchd gog), so a failure here usually
-// means the login keychain itself is locked or unavailable — the config-token
-// fallbacks cover that.
+// credential/keychain access problem. sift first tries a login-session gog
+// bridge; if that's unavailable the login keychain likely isn't reachable from
+// this session, so we point at the bridge or a config-token fallback.
 func gogHint(op string, err error, out string) error {
 	base := classifyGogError(op, err, out)
 	msg := strings.ToLower(out + " " + err.Error())
@@ -247,7 +267,7 @@ func gogHint(op string, err error, out string) error {
 	case strings.Contains(msg, "no auth") || strings.Contains(msg, "keychain") ||
 		strings.Contains(msg, "credential") || strings.Contains(msg, "keyring") ||
 		strings.Contains(msg, "interaction") || strings.Contains(msg, "not allowed"):
-		return fmt.Errorf("%w — sift ran gog in your login session (launchctl asuser) so it could read the macOS keychain. If this still fails the login keychain may be locked/absent; add one of these to %s and rerun: [gmail] service_account_json = \"<workspace service-account key>\", [gmail] refresh_token (with client_id/client_secret), or a short-lived [gmail] access_token.", base, config.DefaultConfigPath())
+		return fmt.Errorf("%w — Gmail needs the login keychain, which isn't reachable from this session. Run `sift setup daemon` to install the login-session gog bridge (like OpenClaw), or add a credential to %s: [gmail] service_account_json, refresh_token (with client_id/client_secret), or access_token.", base, config.DefaultConfigPath())
 	default:
 		return base
 	}

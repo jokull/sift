@@ -89,14 +89,23 @@ sift setup        # once, from a desktop/GUI session: writes the Fastmail JMAP
 ```
 
 After that, `sift` reads the Fastmail token from the config file and no longer
-needs the keychain. **Gmail works over SSH out of the box** because `sift` runs
-`gog` in your login (GUI) session via `launchctl asuser` — the same mechanism
-OpenClaw uses (its launchd-spawned `gog` reads the login keychain). So the login
-keychain token is used even from an SSH session; no extra credential is needed.
+needs the keychain.
 
-If the login keychain is locked/absent (or on non-macOS), `sift` degrades to a
-clean warning and you can give it its own Gmail token via `sift setup gmail`,
-then add one of these under `[gmail]` in `~/.config/sift/config.toml`:
+**Gmail over SSH** is handled by a small **gog bridge daemon**: it runs `gog`
+in your login (GUI) session where the login keychain is unlocked — the exact
+mechanism OpenClaw uses — and `sift` talks to it headlessly over a unix socket.
+So Gmail works from an SSH session with no extra credential:
+
+```bash
+sift setup daemon                                   # install the login-session bridge (LaunchAgent)
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.jokull.sift.gogd.plist
+```
+
+`sift` auto-detects the bridge socket (`~/.sift/gogd.sock`) and uses it; you can
+also run the daemon in the foreground with `sift daemon`. If the login keychain
+is unavailable (or on non-macOS), `sift` falls back to a clear warning and you
+can give it its own Gmail token via `sift setup gmail`, then add **one** of these
+under `[gmail]` in `~/.config/sift/config.toml`:
 
 - **Workspace service account (recommended, no expiry):** create a service
   account, enable domain-wide delegation for its client_id with scope
@@ -107,7 +116,7 @@ then add one of these under `[gmail]` in `~/.config/sift/config.toml`:
 - **Short-lived access token (~1h, quick test):** set `access_token = "..."`.
 
 `sift` mints an access token from any of these and hands it to `gog` via
-`GOG_ACCESS_TOKEN`, which bypasses the keychain.
+`GOG_ACCESS_TOKEN`.
 
 The values in `~/.config/sift/config.toml` are machine-local; back them up with
 your dotfiles, not the repo.

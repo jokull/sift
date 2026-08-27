@@ -10,7 +10,7 @@ func TestGogHintNoAuth(t *testing.T) {
 	err := errors.New("exit status 4")
 	out := "No auth for gmail jokull@triptojapan.com. OAuth (browser flow): gog auth add ..."
 	msg := gogHint("gmail search", err, out).Error()
-	for _, want := range []string{"service_account_json", "refresh_token", "access_token", "macOS keychain"} {
+	for _, want := range []string{"service_account_json", "refresh_token", "access_token", "keychain"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("hint missing %q:\n%s", want, msg)
 		}
