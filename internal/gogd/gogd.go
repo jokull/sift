@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -24,9 +25,10 @@ type request struct {
 	Args []string `json:"args"`
 }
 
-// response returns gog's combined output and its exit code.
+// response returns gog's stdout, stderr and exit code.
 type response struct {
-	Output string `json:"output"`
+	Output string `json:"output"` // stdout (JSON)
+	Error  string `json:"error"`  // stderr (human messages/notes/errors)
 	Code   int    `json:"code"`
 }
 
@@ -95,7 +97,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmd := exec.CommandContext(r.Context(), s.GogBin, req.Args...)
-	out, err := cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	code := 0
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -104,7 +109,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			code = -1
 		}
 	}
-	_ = json.NewEncoder(w).Encode(response{Output: string(out), Code: code})
+	_ = json.NewEncoder(w).Encode(response{Output: stdout.String(), Error: strings.TrimSpace(stderr.String()), Code: code})
 }
 
 // Call invokes gog with args on a running daemon and returns its combined
@@ -136,7 +141,7 @@ func Call(ctx context.Context, socket string, args ...string) (string, error) {
 		return "", fmt.Errorf("gogd decode: %w", err)
 	}
 	if out.Code != 0 {
-		return out.Output, fmt.Errorf("gogd exit %d", out.Code)
+		return out.Output, fmt.Errorf("gogd exit %d: %s", out.Code, out.Error)
 	}
 	return out.Output, nil
 }

@@ -4,12 +4,14 @@
 package accounts
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/jokull/sift/internal/config"
 	"github.com/jokull/sift/internal/model"
@@ -56,21 +58,37 @@ func New(cfg *config.Config) (map[model.Account]Source, error) {
 	return srcs, nil
 }
 
-// execGog runs the gog CLI returning combined output and trimming whitespace.
-func execGog(ctx context.Context, gogBin string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, gogBin, args...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
-}
-
-// execGogEnv is execGog with an extra env entry (used to inject GOG_ACCESS_TOKEN).
-func execGogEnv(ctx context.Context, gogBin string, env []string, args ...string) (string, error) {
+// runGog runs the gog CLI capturing stdout and stderr separately. It returns the
+// command's stdout (the JSON/TSV), and on a non-zero exit an error whose message
+// carries stderr — where gog prints human messages (e.g. "No auth", the one-time
+// "Note: Using direct access token" line).
+func runGog(ctx context.Context, gogBin string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, gogBin, args...)
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return stdout.String(), fmt.Errorf("%w: %s", err, msg)
+	}
+	return stdout.String(), nil
+}
+
+// execGog runs gog returning stdout only (so stderr notes never corrupt the JSON).
+func execGog(ctx context.Context, gogBin string, args ...string) (string, error) {
+	return runGog(ctx, gogBin, nil, args...)
+}
+
+// execGogEnv is execGog with an extra env entry (used to inject GOG_ACCESS_TOKEN).
+func execGogEnv(ctx context.Context, gogBin string, env []string, args ...string) (string, error) {
+	return runGog(ctx, gogBin, env, args...)
 }
 
 // execGogAsUser runs gog in the user's login (GUI) session via `launchctl asuser`
@@ -82,7 +100,5 @@ func execGogAsUser(ctx context.Context, gogBin string, args ...string) (string, 
 		return execGog(ctx, gogBin, args...)
 	}
 	cmdArgs := append([]string{"asuser", strconv.Itoa(os.Getuid()), gogBin}, args...)
-	cmd := exec.CommandContext(ctx, "launchctl", cmdArgs...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return runGog(ctx, "launchctl", nil, cmdArgs...)
 }
