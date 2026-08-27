@@ -59,3 +59,33 @@ func TestWindowResizeKeepsWorking(t *testing.T) {
 		t.Fatal("empty view after resize")
 	}
 }
+
+func TestBulkArchiveRemovesCohortOptimistically(t *testing.T) {
+	now := time.Now()
+	mk := func(id, email string, cat model.Category) *triage.Candidate {
+		return &triage.Candidate{
+			Thread: &model.Thread{ID: id, Account: model.AccountGmail, FromEmail: email, Date: now},
+			Pred:   model.Prediction{Category: cat, Action: model.ActionArchive, Confidence: 0.9},
+		}
+	}
+	m := &appModel{
+		loaded: true, now: now, width: 100, height: 40,
+		candidates: []*triage.Candidate{
+			mk("1", "a@google.com", model.CategoryPromotion),
+			mk("2", "b@google.com", model.CategoryPromotion),
+			mk("3", "c@apple.com", model.CategoryPromotion),   // different domain → stays
+			mk("4", "d@google.com", model.CategoryTransactional), // different category → stays
+		},
+		progress: map[string]triage.Progress{},
+	}
+
+	m.applyDecision(0, model.ActionArchive, true)
+	if len(m.candidates) != 2 {
+		t.Fatalf("expected 2 candidates left after bulk archive, got %d", len(m.candidates))
+	}
+	for _, c := range m.candidates {
+		if c.Thread.SenderGroup() == "google.com" && c.Pred.Category == model.CategoryPromotion {
+			t.Fatalf("cohort row not removed: %s", c.Thread.ID)
+		}
+	}
+}

@@ -143,10 +143,6 @@ func (m *appModel) applyDecision(idx int, action model.Action, wholeCohort bool)
 		return
 	}
 	can := m.candidates[idx]
-	threads := []*model.Thread{can.Thread}
-	if wholeCohort && len(can.Cohort) > 0 {
-		threads = append(threads, can.Cohort...)
-	}
 
 	// Record per-sender decisions so future runs remember them.
 	if can.Pred.Category == model.CategoryPromotion || can.Pred.Category == model.CategoryTransactional {
@@ -164,35 +160,53 @@ func (m *appModel) applyDecision(idx int, action model.Action, wholeCohort bool)
 		}
 	}
 
+	// Determine which candidates this decision covers: the single row, or — for a
+	// whole-cohort/hulk action — every row sharing the same sender-group+category.
+	var handled []*triage.Candidate
+	if wholeCohort {
+		group := can.Thread.SenderGroup()
+		cat := can.Pred.Category
+		for _, c := range m.candidates {
+			if c.Thread.SenderGroup() == group && c.Pred.Category == cat {
+				handled = append(handled, c)
+			}
+		}
+	} else {
+		handled = []*triage.Candidate{can}
+	}
+
+	// Submit work per account (a cohort can span both mailboxes).
 	if action != model.ActionKeep {
-		label := fmt.Sprintf("%s x%d", actionName(action), len(threads))
-		if m.worker != nil {
-			m.worker.Submit(&triage.Job{
-				Account: can.Thread.Account,
-				Threads: threads,
-				Action:  action,
-				Label:   label,
-			})
+		byAccount := map[model.Account][]*model.Thread{}
+		for _, c := range handled {
+			byAccount[c.Thread.Account] = append(byAccount[c.Thread.Account], c.Thread)
+		}
+		for acct, ts := range byAccount {
+			if m.worker != nil {
+				m.worker.Submit(&triage.Job{
+					Account: acct,
+					Threads: ts,
+					Action:  action,
+					Label:   fmt.Sprintf("%s x%d", actionName(action), len(ts)),
+				})
+			}
 		}
 	}
 
-	// Remove handled candidates. wholeCohort removes every cohort member.
-	if wholeCohort {
-		remove := map[string]bool{}
-		remove[can.Thread.ID] = true
-		for _, t := range can.Cohort {
-			remove[t.ID] = true
-		}
-		kept := m.candidates[:0]
-		for _, c := range m.candidates {
-			if !remove[c.Thread.ID] {
-				kept = append(kept, c)
-			}
-		}
-		m.candidates = kept
-	} else {
-		m.candidates = append(m.candidates[:idx], m.candidates[idx+1:]...)
+	// Remove handled candidates optimistically (before the worker finishes), so
+	// every row in the cohort vanishes from the list immediately.
+	handledIDs := map[string]bool{}
+	for _, c := range handled {
+		handledIDs[c.Thread.ID] = true
 	}
+	kept := m.candidates[:0]
+	for _, c := range m.candidates {
+		if !handledIDs[c.Thread.ID] {
+			kept = append(kept, c)
+		}
+	}
+	m.candidates = kept
+
 	if m.cursor >= len(m.candidates) {
 		m.cursor = len(m.candidates) - 1
 	}
