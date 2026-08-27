@@ -134,6 +134,9 @@ func Load(filePath string) (*Config, error) {
 	if fileToken != "" {
 		cfg.Fastmail.Token = fileToken
 	}
+	// Gmail refresh-token/client creds from ~/.sift/gmail.env (written once on
+	// the host, read over SSH) provide Gmail auth without the keychain/daemon.
+	applyGmailEnv(cfg.Gmail)
 
 	return cfg, nil
 }

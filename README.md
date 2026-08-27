@@ -98,35 +98,34 @@ sift setup        # once, from a desktop/GUI session: writes the Fastmail JMAP
 After that, `sift` reads the Fastmail token from the config file and no longer
 needs the keychain.
 
-**Gmail over SSH** is handled by a small **gog bridge daemon**: it runs `gog`
-in your login (GUI) session where the login keychain is unlocked — the exact
-mechanism OpenClaw uses — and `sift` talks to it headlessly over a unix socket.
-So Gmail works from an SSH session with no extra credential:
+**Gmail over SSH — simplest:** run one command on the **host** (a terminal in
+your desktop/GUI session, where the keychain is unlocked):
 
 ```bash
-sift setup daemon                                   # install the login-session bridge (LaunchAgent)
+sift setup gmail-token     # reads gog's Gmail refresh token (approve the keychain
+                           # prompt once) and writes it to ~/.sift/gmail.env
+```
+
+`sift` reads `~/.sift/gmail.env` (or `SIFT_GMAIL_REFRESH_TOKEN` / `SIFT_GMAIL_CLIENT_ID`
+/ `SIFT_GMAIL_CLIENT_SECRET`) over SSH and **refreshes its own Gmail access
+token**, handing it to `gog` via `GOG_ACCESS_TOKEN` — so Gmail works from SSH
+with no keychain, no daemon, no service account, and no re-auth.
+
+**Alternative (no token extracted): run a gog bridge daemon** in the login session
+so `gog` keeps using the keychain directly:
+
+```bash
+sift setup daemon
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.jokull.sift.gogd.plist
 ```
 
-`sift` auto-detects the bridge socket (`~/.sift/gogd.sock`) and uses it; you can
-also run the daemon in the foreground with `sift daemon`. If the login keychain
-is unavailable (or on non-macOS), `sift` falls back to a clear warning and you
-can give it its own Gmail token via `sift setup gmail`, then add **one** of these
-under `[gmail]` in `~/.config/sift/config.toml`:
+`sift` auto-detects the bridge socket (`~/.sift/gogd.sock`) and forwards gog calls
+to it. If neither is available, `sift` falls back to a clear warning and you can
+add a config credential via `sift setup gmail` (`service_account_json` /
+`refresh_token` / `access_token` under `[gmail]`).
 
-- **Workspace service account (recommended, no expiry):** create a service
-  account, enable domain-wide delegation for its client_id with scope
-  `https://mail.google.com/`, then set
-  `service_account_json = "/path/to/service-account.json"`.
-- **OAuth refresh token:** set `refresh_token = "..."` (uses the `client_id` /
-  `client_secret` that `sift setup gmail` wrote).
-- **Short-lived access token (~1h, quick test):** set `access_token = "..."`.
-
-`sift` mints an access token from any of these and hands it to `gog` via
-`GOG_ACCESS_TOKEN`.
-
-The values in `~/.config/sift/config.toml` are machine-local; back them up with
-your dotfiles, not the repo.
+The values in `~/.config/sift/config.toml` and `~/.sift/gmail.env` are
+machine-local; back them up with your dotfiles, not the repo.
 
 ## How the AI is used (keeping cost + latency low)
 

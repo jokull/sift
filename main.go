@@ -43,7 +43,9 @@ func main() {
 			runPlan()
 			return
 		case "setup":
-			if len(os.Args) > 2 && os.Args[2] == "gmail" {
+			if len(os.Args) > 2 && os.Args[2] == "gmail-token" {
+				runSetupGmailToken()
+			} else if len(os.Args) > 2 && os.Args[2] == "gmail" {
 				runGmailSetup()
 			} else if len(os.Args) > 2 && os.Args[2] == "daemon" {
 				runSetupDaemon()
@@ -172,6 +174,27 @@ func runDaemon() {
 	if err := gogd.NewServer(gogBin, socket).Serve(ctx); err != nil {
 		fatal("daemon: %v", err)
 	}
+}
+
+// runSetupGmailToken reads gog's Gmail refresh token from the login keychain and
+// writes it to ~/.sift/gmail.env so sift can refresh its own access token over
+// SSH. Run this ON THE HOST (GUI/login session) and approve the keychain prompt.
+func runSetupGmailToken() {
+	refresh, err := config.ReadGogRefreshToken()
+	if err != nil {
+		fatal("read gog refresh token: %v\nRun this from a terminal in your desktop (GUI) login session, not SSH.", err)
+	}
+	clientID, clientSecret, cerr := config.ReadGogClientCredentials()
+	if cerr != nil {
+		fmt.Fprintln(os.Stderr, "sift: warning: could not read gog client credentials:", cerr)
+	}
+	path := config.GmailEnvPath()
+	if err := config.WriteGmailEnv(path, refresh, clientID, clientSecret); err != nil {
+		fatal("write gmail env: %v", err)
+	}
+	fmt.Printf("Wrote Gmail refresh token + OAuth client creds to:\n  %s\n", path)
+	fmt.Println("sift over SSH will now refresh a Gmail access token from this file automatically.")
+	fmt.Println("Keep this file out of any repo (machine-local, mode 0600).")
 }
 
 // runSetupDaemon installs a LaunchAgent so the gog bridge runs in the login
