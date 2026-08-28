@@ -15,21 +15,21 @@
 # api_key = ""            # leave empty to read DEEPSEEK_API_KEY / ~/.openclaw/.env
 
 [fastmail]
-# user = "jokull@solberg.is"
-# account_id = "u9dd94086"
-# api_url = "https://phl.api.fastmail.com/jmap/api/"
+# user = "you@example.com"
+# account_id = "<account-id>"
+# api_url = "https://<api-host>.fastmail.com/jmap/api/"
 # -- Over SSH the macOS keychain is often unavailable; run `sift setup` to write
 # -- the JMAP token here once (uses the keychain from your desktop session).
 # token = ""
 # [fastmail.folders]
-# inbox = "P-F"
-# archive = "P2V"
-# receipts = "P1Wct"
-# reading = "P4k"
+# inbox = "<inbox-mailbox-id>"
+# archive = "<archive-mailbox-id>"
+# receipts = "<receipts-mailbox-id>"
+# reading = "<reading-mailbox-id>"
 
 [gmail]
-# account = "jokull@triptojapan.com"
-# gog_bin = "/opt/homebrew/bin/gog"
+# account = "you@workspace.example"
+# gog_bin = "/usr/local/bin/gog"
 # inbox_label = "INBOX"
 # receipts_label = "Receipts"
 # reading_label = "Reading"

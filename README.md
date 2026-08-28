@@ -1,7 +1,7 @@
 # sift
 
-A TUI for email cleanup triage across your two inboxes — Fastmail (personal,
-`jokull@solberg.is`) and Gmail (work, `jokull@triptojapan.com`). It prunes
+A TUI for email cleanup triage across your two inboxes — Fastmail (personal)
+and Gmail (work, e.g. Google Workspace). It prunes
 signal from noise, newest → oldest, so your inbox holds personal and meaningful
 communication instead of a growing pile of receipts, newsletters, and
 promotions.
