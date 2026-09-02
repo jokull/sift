@@ -26,6 +26,8 @@
 # archive = "<archive-mailbox-id>"
 # receipts = "<receipts-mailbox-id>"
 # reading = "<reading-mailbox-id>"
+# spam  = "<junk-mailbox-id>"
+# trash = "<trash-mailbox-id>"
 
 [gmail]
 # account = "you@workspace.example"
@@ -33,6 +35,8 @@
 # inbox_label = "INBOX"
 # receipts_label = "Receipts"
 # reading_label = "Reading"
+# spam_label = "SPAM"
+# trash_label = "TRASH"
 # -- Gmail over SSH (macOS keychain is locked). Add ONE of these; `sift setup gmail`
 # -- writes the client_id/client_secret and shows all options:
 # service_account_json = "/path/to/service-account.json"   # Workspace domain-wide delegation (no expiry)

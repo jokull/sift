@@ -320,6 +320,10 @@ func (g *gmailSource) Apply(ctx context.Context, threads []*model.Thread, action
 			args = append(args, "--add="+g.cfg.ReceiptsLabel, "--remove=INBOX")
 		case model.ActionReading:
 			args = append(args, "--add="+g.cfg.ReadingLabel, "--remove=INBOX")
+		case model.ActionSpam:
+			args = append(args, "--add="+g.cfg.SpamLabel, "--remove=INBOX")
+		case model.ActionDelete:
+			args = append(args, "--add="+g.cfg.TrashLabel, "--remove=INBOX")
 		case model.ActionArchive, model.ActionUnsubscribe:
 			args = append(args, "--remove=INBOX")
 		default:

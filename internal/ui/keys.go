@@ -26,9 +26,9 @@ func (m *appModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.drillRight()
 	case "left", "h", "b", "esc":
 		return m.drillLeft()
-	case "j", "down":
+	case "down":
 		m.moveCursor(1)
-	case "k", "up":
+	case "up":
 		m.moveCursor(-1)
 	case "g":
 		m.jumpCursor(0)
@@ -46,6 +46,13 @@ func (m *appModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyDecision(m.cursor, model.ActionReceipts, false)
 	case "n":
 		m.applyDecision(m.cursor, model.ActionReading, false)
+	case "k":
+		// keep: whitelist sender; stays in inbox, removed from the triage queue.
+		m.applyDecision(m.cursor, model.ActionKeep, false)
+	case "s":
+		m.applyDecision(m.cursor, model.ActionSpam, false)
+	case "d":
+		m.applyDecision(m.cursor, model.ActionDelete, false)
 	case "A":
 		m.applyDecision(m.cursor, model.ActionArchive, true)
 	case "U":
@@ -54,9 +61,12 @@ func (m *appModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyDecision(m.cursor, model.ActionReceipts, true)
 	case "N":
 		m.applyDecision(m.cursor, model.ActionReading, true)
-	case "s":
-		// keep: just remove from queue, no worker action.
-		m.handleKeep(m.cursor)
+	case "K":
+		m.applyDecision(m.cursor, model.ActionKeep, true)
+	case "S":
+		m.applyDecision(m.cursor, model.ActionSpam, true)
+	case "D":
+		m.applyDecision(m.cursor, model.ActionDelete, true)
 	}
 	return m, m.waitProgress()
 }
@@ -73,8 +83,12 @@ func (m *appModel) detailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyDecision(m.cursor, model.ActionReceipts, false)
 	case "n":
 		m.applyDecision(m.cursor, model.ActionReading, false)
+	case "k":
+		m.applyDecision(m.cursor, model.ActionKeep, false)
 	case "s":
-		m.handleKeep(m.cursor)
+		m.applyDecision(m.cursor, model.ActionSpam, false)
+	case "d":
+		m.applyDecision(m.cursor, model.ActionDelete, false)
 	case "x", "enter":
 		m.applyDecision(m.cursor, m.detail.defaultAction(), true)
 	}
@@ -101,25 +115,6 @@ func (m *appModel) openDetail() {
 	if m.cursor >= 0 && m.cursor < len(m.candidates) {
 		m.detail = newDetail(m.candidates[m.cursor])
 	}
-}
-
-func (m *appModel) handleKeep(idx int) {
-	if idx < 0 || idx >= len(m.candidates) {
-		return
-	}
-	can := m.candidates[idx]
-	if m.store != nil && (can.Pred.Category == model.CategoryPromotion || can.Pred.Category == model.CategoryTransactional) {
-		_ = m.store.AddWhitelist(can.Thread.SenderKey())
-		_ = m.store.SaveSenderDecision(can.Thread.SenderKey(), model.ActionKeep)
-	}
-	m.candidates = append(m.candidates[:idx], m.candidates[idx+1:]...)
-	if m.cursor >= len(m.candidates) {
-		m.cursor = len(m.candidates) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-	m.detail = nil
 }
 
 func (m *appModel) quit() (tea.Model, tea.Cmd) {

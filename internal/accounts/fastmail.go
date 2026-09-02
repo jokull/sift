@@ -318,6 +318,10 @@ func (s *fastmailSource) Apply(ctx context.Context, threads []*model.Thread, act
 		target = s.cfg.Folders.Receipts
 	case model.ActionReading:
 		target = s.cfg.Folders.Reading
+	case model.ActionSpam:
+		target = s.cfg.Folders.Spam
+	case model.ActionDelete:
+		target = s.cfg.Folders.Trash
 	case model.ActionArchive, model.ActionUnsubscribe:
 		target = s.cfg.Folders.Archive
 	default:

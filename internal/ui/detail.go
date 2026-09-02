@@ -40,7 +40,7 @@ func (d *detailModel) render() string {
 		lines = append(lines, fmt.Sprintf("  reason:    %s", can.Pred.Reason))
 	}
 	lines = append(lines, "")
-	lines = append(lines, accentStyle.Render("[a] archive  [u] unsubscribe  [r] receipts  [n] reading  [s] keep  [x] apply default to whole sender  [b] back"))
+	lines = append(lines, accentStyle.Render("[a] archive  [u] unsubscribe  [r] receipts  [n] reading  [k] keep  [s] spam  [d] delete  [x] apply default to whole sender  [b] back"))
 
 	return strings.Join(lines, "\n")
 }

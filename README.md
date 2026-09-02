@@ -54,7 +54,7 @@ The list shows threads needing a decision, newest first. Each row is a decision
 **window**: its AI-suggested action, sender, subject, account, age, and how many
 threads from that sender would be affected (`×N`). The `×N` cohort counts the
 sender's triage threads (any category) **across the whole loaded inbox**, so a
-bulk action (`A`/`U`/`R`/`N`) acts on the whole sender. Receipts/newsletters
+bulk action (`A`/`U`/`R`/`N`/`K`/`S`/`D`) acts on the whole sender. Receipts/newsletters
 (auto-handled) and keeps stay out of the cohort — they are never dragged into an
 archive.
 
@@ -78,9 +78,25 @@ into narrow sidebars as you go (the focused column keeps the width):
 3. **messages** — `→` again shows the thread's messages with their **plain
    text** bodies (HTML is converted; replies are shown linearly, not nested).
 
-`←` / `h` / `esc` steps back up a level; `j`/`k` moves the cursor in the focused
+`←` / `h` / `esc` steps back up a level; `↑`/`↓` moves the cursor in the focused
 column; `g`/`G` jump to the top/bottom. The mouse wheel scrolls the focused
 column (and the message pane), so long bodies scroll smoothly.
+
+### Keys
+
+| Key | Action |
+| --- | --- |
+| `↑`/`↓` | navigate |
+| `→` / `l` | drill down (threads → messages) |
+| `←` / `h` / `esc` | back up a level / close detail |
+| `⏎` / `space` | open the decision window |
+| `a` / `u` / `r` / `n` | archive / unsubscribe / receipts / reading (this thread) |
+| `k` | keep (whitelist sender; stays in inbox) |
+| `s` / `d` | spam / delete (move to trash) |
+| `A` `U` `R` `N` `K` `S` `D` | same action, applied to **every** thread from that sender |
+| `x` (in window) | apply the AI default action to the whole sender cohort |
+| `g` / `G` | jump to top / bottom |
+| `q` / `ctrl-c` | quit |
 
 > **Fastmail bodies:** Fastmail stores email bodies as downloadable blobs; for
 > emails where the body isn't returned inline `sift` falls back to the message

@@ -18,11 +18,13 @@ const (
 type Action string
 
 const (
-	ActionKeep       Action = "keep"       // do nothing; stays in inbox
-	ActionArchive    Action = "archive"    // remove from inbox (cross-account archive)
-	ActionReceipts   Action = "receipts"   // move to Receipts folder
-	ActionReading    Action = "reading"    // move to Reading folder
+	ActionKeep        Action = "keep"        // do nothing; stays in inbox
+	ActionArchive     Action = "archive"     // remove from inbox (cross-account archive)
+	ActionReceipts    Action = "receipts"    // move to Receipts folder
+	ActionReading     Action = "reading"     // move to Reading folder
 	ActionUnsubscribe Action = "unsubscribe" // archive AND mark sender for unsubscribe
+	ActionSpam        Action = "spam"        // mark as spam (move to Spam/Junk)
+	ActionDelete      Action = "delete"      // move to Trash (recoverable)
 )
 
 // Minor action label used for promoting a thread to "keep" (personal).
@@ -32,11 +34,11 @@ const (
 
 // Prediction is the AI's per-thread verdict.
 type Prediction struct {
-	Category    Category
-	Action      Action
-	Confidence  float64 // 0..1
-	Reason      string  // short human-readable rationale
-	SenderWide  bool    // true if the action applies to every thread from this sender
+	Category   Category
+	Action     Action
+	Confidence float64 // 0..1
+	Reason     string  // short human-readable rationale
+	SenderWide bool    // true if the action applies to every thread from this sender
 }
 
 // IsAuto reports whether the prediction's action is a no-decision automatic

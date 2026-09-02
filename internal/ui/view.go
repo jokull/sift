@@ -32,6 +32,8 @@ var actionBadge = map[model.Action]string{
 	model.ActionUnsubscribe: "unsub",
 	model.ActionReceipts:    "receipts",
 	model.ActionReading:     "reading",
+	model.ActionSpam:        "spam",
+	model.ActionDelete:      "del",
 }
 
 var actionColor = map[model.Action]lipgloss.Style{
@@ -40,6 +42,8 @@ var actionColor = map[model.Action]lipgloss.Style{
 	model.ActionUnsubscribe: lipgloss.NewStyle().Foreground(lipgloss.Color("213")),
 	model.ActionReceipts:    lipgloss.NewStyle().Foreground(lipgloss.Color("226")),
 	model.ActionReading:     lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
+	model.ActionSpam:        lipgloss.NewStyle().Foreground(lipgloss.Color("203")),
+	model.ActionDelete:      lipgloss.NewStyle().Foreground(lipgloss.Color("196")),
 }
 
 var accountStyle = map[model.Account]lipgloss.Style{
@@ -128,14 +132,17 @@ func (m *appModel) helpPanel() string {
 	rows := []string{
 		"→ / l        drill down (threads → messages)",
 		"← / h / esc  back up a level",
-		"↑/↓ or j/k   move the focused column",
+		"↑/↓          move the focused column",
 		"⏎ / space    open decision window",
 		"a            archive this thread",
 		"u            unsubscribe sender (archive + remember)",
 		"r            move to Receipts",
 		"n            move to Reading",
-		"s            keep (whitelist sender; stays in inbox)",
-		"A/U/R/N      same, applied to every thread from that sender",
+		"k            keep (whitelist sender; stays in inbox)",
+		"s            spam",
+		"d            delete (move to trash)",
+		"A/U/R/N      cohort archive/unsubscribe/receipts/reading",
+		"K/S/D        cohort keep/spam/delete",
 		"x (window)   apply AI default action to whole sender cohort",
 		"q quit · scroll with mouse",
 	}
@@ -336,7 +343,7 @@ func sortStrings(s []string) {
 }
 
 func (m *appModel) viewFooter() string {
-	return dimStyle.Render("→/← drill · j/k move · ⏎ detail · a/u/r/n act · A/U/R/N cohort · s keep · q quit · ? help")
+	return dimStyle.Render("→/← drill · ↑/↓ move · ⏎ detail · a/u/r/n act · k keep · s spam · d delete · A/U/R/N/K/S/D cohort · q quit · ? help")
 }
 
 func accountTag(a model.Account) string {

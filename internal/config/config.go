@@ -42,6 +42,8 @@ type Folders struct {
 	Archive  string `json:"archive"`
 	Receipts string `json:"receipts"`
 	Reading  string `json:"reading"`
+	Spam     string `json:"spam"`
+	Trash    string `json:"trash"`
 }
 
 type GmailConfig struct {
@@ -50,6 +52,8 @@ type GmailConfig struct {
 	InboxLabel    string `json:"inbox_label"`
 	ReceiptsLabel string `json:"receipts_label"`
 	ReadingLabel  string `json:"reading_label"`
+	SpamLabel     string `json:"spam_label"`
+	TrashLabel    string `json:"trash_label"`
 
 	// Auth for direct Gmail access over SSH (bypasses gog's macOS keychain).
 	AccessToken   string `json:"access_token,omitempty"`   // short-lived (~1h)
@@ -78,6 +82,8 @@ type FileConfig struct {
 		InboxLabel     string `toml:"inbox_label"`
 		ReceiptsLabel  string `toml:"receipts_label"`
 		ReadingLabel   string `toml:"reading_label"`
+		SpamLabel      string `toml:"spam_label"`
+		TrashLabel     string `toml:"trash_label"`
 		AccessToken    string `toml:"access_token"`
 		ServiceAccount string `toml:"service_account_json"`
 		ClientID       string `toml:"client_id"`
@@ -182,6 +188,10 @@ func (c *Config) discoverFastmail(token, src string) error {
 			f.Receipts = b.ID
 		case b.Name == "Reading":
 			f.Reading = b.ID
+		case b.Role == "junk":
+			f.Spam = b.ID
+		case b.Role == "trash":
+			f.Trash = b.ID
 		}
 	}
 	c.Fastmail = &FastmailConfig{
@@ -209,6 +219,8 @@ func (c *Config) discoverGmail() error {
 		InboxLabel:    "INBOX",
 		ReceiptsLabel: "Receipts",
 		ReadingLabel:  "Reading",
+		SpamLabel:     "SPAM",
+		TrashLabel:    "TRASH",
 	}
 	c.Gmail.EnsureLabels = true
 	return nil
@@ -251,6 +263,12 @@ func applyFile(cfg *Config, f *FileConfig) {
 		if f.Fastmail.Folders.Reading != "" {
 			cfg.Fastmail.Folders.Reading = f.Fastmail.Folders.Reading
 		}
+		if f.Fastmail.Folders.Spam != "" {
+			cfg.Fastmail.Folders.Spam = f.Fastmail.Folders.Spam
+		}
+		if f.Fastmail.Folders.Trash != "" {
+			cfg.Fastmail.Folders.Trash = f.Fastmail.Folders.Trash
+		}
 	}
 	if f.Gmail != nil {
 		if f.Gmail.Account != "" {
@@ -267,6 +285,12 @@ func applyFile(cfg *Config, f *FileConfig) {
 		}
 		if f.Gmail.ReadingLabel != "" {
 			cfg.Gmail.ReadingLabel = f.Gmail.ReadingLabel
+		}
+		if f.Gmail.SpamLabel != "" {
+			cfg.Gmail.SpamLabel = f.Gmail.SpamLabel
+		}
+		if f.Gmail.TrashLabel != "" {
+			cfg.Gmail.TrashLabel = f.Gmail.TrashLabel
 		}
 		if f.Gmail.AccessToken != "" {
 			cfg.Gmail.AccessToken = f.Gmail.AccessToken

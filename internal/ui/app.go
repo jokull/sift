@@ -293,6 +293,10 @@ func actionName(a model.Action) string {
 		return "receipts"
 	case model.ActionReading:
 		return "reading"
+	case model.ActionSpam:
+		return "spam"
+	case model.ActionDelete:
+		return "delete"
 	}
 	return string(a)
 }
