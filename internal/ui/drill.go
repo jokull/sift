@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -151,7 +150,7 @@ func (m *appModel) renderCandidateColumn(width, height int) string {
 	for i := start; i < end; i++ {
 		c := m.candidates[i]
 		sel := i == m.cursor
-		line := candidateCompactRow(c, width, sel)
+		line := m.candidateCompactRow(c, width, sel)
 		if i < end-1 {
 			line += "\n"
 		}
@@ -160,26 +159,38 @@ func (m *appModel) renderCandidateColumn(width, height int) string {
 	return b.String()
 }
 
-// candidateCompactRow renders one candidate row in a width-aware compact form.
-func candidateCompactRow(c *triage.Candidate, width int, sel bool) string {
+// candidateCompactRow renders one candidate row. At full width it shows the full
+// set of columns (action, sender, subject, inbox, age, cohort); sidebars collapse.
+func (m *appModel) candidateCompactRow(c *triage.Candidate, width int, sel bool) string {
 	badge := actionBadge[c.Pred.Action]
 	if badge == "" {
 		badge = "?"
 	}
-	badgeCell := actionColor[c.Pred.Action].Render(padTo(badge, 8))
 	sender := c.Thread.FromEmail
 	if sender == "" {
 		sender = c.Thread.FromName
 	}
 	subj := c.Thread.Subject
 
-	// Slots sum exactly to width: 2 (cursor frame) + badge + gaps + sender + subj.
+	// Slots sum exactly to width: 2 (cursor frame) + badge + gaps + sender + subj
+	// (+ inbox + age + cohort at full width).
 	var line string
 	switch {
-	case width >= 74:
-		line = "  " + badgeCell + " " + fit(sender, 24) + " " + fit(subj, width-36)
-	case width >= 44:
-		line = "  " + badgeCell + " " + fit(sender, 18) + " " + fit(subj, width-30)
+	case width >= 84:
+		badgeW, senderW, acctW, ageW, cohortW := 9, 22, 4, 7, 6
+		subjW := width - 60
+		if subjW < 6 {
+			subjW = 6
+		}
+		badgeCell := actionColor[c.Pred.Action].Render(fit(badge, badgeW))
+		acctCell := accountStyle[c.Thread.Account].Render(fit(accountTag(c.Thread.Account), acctW))
+		ageCell := dimStyle.Render(fit(ageString(c.Thread.Date, m.now), ageW))
+		cohortCell := dimStyle.Render(fit(fmt.Sprintf("×%d", c.CohortCount()), cohortW))
+		line = "  " + badgeCell + "  " + fit(sender, senderW) + "  " + fit(subj, subjW) +
+			"  " + acctCell + "  " + ageCell + "  " + cohortCell
+	case width >= 48:
+		badgeCell := actionColor[c.Pred.Action].Render(fit(badge, 8))
+		line = "  " + badgeCell + " " + fit(sender, 22) + " " + fit(subj, width-34)
 	default:
 		line = "  " + fit(sender, width-13) + " " + fit(subj, 10)
 	}
@@ -218,7 +229,7 @@ func (m *appModel) renderThreadColumn(width, height int) string {
 	}
 	for i := start; i < end; i++ {
 		sel := i == m.selThread
-		line := threadCompactRow(m.threads[i], width, sel)
+		line := m.threadCompactRow(m.threads[i], width, sel)
 		if i < end-1 {
 			line += "\n"
 		}
@@ -227,14 +238,14 @@ func (m *appModel) renderThreadColumn(width, height int) string {
 	return b.String()
 }
 
-func threadCompactRow(t *model.Thread, width int, sel bool) string {
+func (m *appModel) threadCompactRow(t *model.Thread, width int, sel bool) string {
 	sender := t.FromEmail
 	if sender == "" {
 		sender = t.FromName
 	}
 	var line string
 	if width >= 60 {
-		meta := fmt.Sprintf("%s · %d msg", ageString(t.Date, time.Now()), t.MessageCount)
+		meta := fmt.Sprintf("%s · %d msg", ageString(t.Date, m.now), t.MessageCount)
 		metaW := visWidth(meta)
 		metaCell := dimStyle.Render(fit(meta, metaW))
 		subjW := width - 28 - metaW
@@ -310,7 +321,7 @@ func (m *appModel) buildMessageContent(width int) ([]string, []int) {
 		if from == "" {
 			from = msg.FromEmail
 		}
-		date := ageString(msg.Date, time.Now())
+		date := ageString(msg.Date, m.now)
 		subjW := width - 36
 		if subjW < 10 {
 			subjW = 10
