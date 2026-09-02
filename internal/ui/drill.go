@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/jokull/sift/internal/model"
 	"github.com/jokull/sift/internal/triage"
 	"github.com/mattn/go-runewidth"
@@ -112,7 +112,7 @@ func joinColumns(cols []string) string {
 			if r < len(cl) {
 				cell = cl[r]
 			}
-			b.WriteString(fit(cell, widths[i]))
+			b.WriteString(fitAnsi(cell, widths[i]))
 			if i < len(cols)-1 {
 				b.WriteString(dimStyle.Render("│"))
 			}
@@ -173,14 +173,15 @@ func candidateCompactRow(c *triage.Candidate, width int, sel bool) string {
 	}
 	subj := c.Thread.Subject
 
+	// Slots sum exactly to width: 2 (cursor frame) + badge + gaps + sender + subj.
 	var line string
 	switch {
 	case width >= 74:
-		line = "  " + badgeCell + " " + fit(sender, 24) + " " + fit(subj, width-35)
+		line = "  " + badgeCell + " " + fit(sender, 24) + " " + fit(subj, width-36)
 	case width >= 44:
 		line = "  " + badgeCell + " " + fit(sender, 18) + " " + fit(subj, width-30)
 	default:
-		line = "  " + fit(sender, width-12) + " " + fit(subj, 10)
+		line = "  " + fit(sender, width-13) + " " + fit(subj, 10)
 	}
 	if sel {
 		line = "▸" + line[1:]
@@ -188,7 +189,7 @@ func candidateCompactRow(c *triage.Candidate, width int, sel bool) string {
 	} else {
 		line = " " + line[1:]
 	}
-	return fit(line, width)
+	return fitAnsi(line, width)
 }
 
 // renderThreadColumn renders the selected candidate's cohort threads.
@@ -231,16 +232,30 @@ func threadCompactRow(t *model.Thread, width int, sel bool) string {
 	if sender == "" {
 		sender = t.FromName
 	}
-	head := fmt.Sprintf("  %-24s %s", fit(sender, 24), fit(t.Subject, width-24))
-	meta := "  " + dimStyle.Render(fmt.Sprintf("%s · %d msg", ageString(t.Date, time.Now()), t.MessageCount))
-	line := head + meta
+	var line string
+	if width >= 60 {
+		meta := fmt.Sprintf("%s · %d msg", ageString(t.Date, time.Now()), t.MessageCount)
+		metaW := visWidth(meta)
+		metaCell := dimStyle.Render(fit(meta, metaW))
+		subjW := width - 28 - metaW
+		if subjW < 4 {
+			subjW = 4
+		}
+		line = "  " + fit(sender, 24) + " " + fit(t.Subject, subjW) + " " + metaCell
+	} else {
+		subjW := width - 19
+		if subjW < 3 {
+			subjW = 3
+		}
+		line = "  " + fit(sender, 16) + " " + fit(t.Subject, subjW)
+	}
 	if sel {
 		line = "▸" + line[1:]
 		line = selStyle.Render(line)
 	} else {
 		line = " " + line[1:]
 	}
-	return fit(line, width)
+	return fitAnsi(line, width)
 }
 
 // renderMessageColumn renders the selected thread's messages + plaintext contents.
@@ -323,7 +338,7 @@ func (m *appModel) buildMessageContent(width int) ([]string, []int) {
 	return lines, starts
 }
 
-// wrapBody word-wraps a plain-text body to a display width using lipgloss.
+// wrapBody word-wraps a plain-text body to a display width (ANSI-aware).
 func (m *appModel) wrapBody(body string, width int) string {
 	if body == "" {
 		return ""
@@ -336,8 +351,7 @@ func (m *appModel) wrapBody(body string, width int) string {
 		if p == "" {
 			continue
 		}
-		wrapped := lipgloss.NewStyle().MaxWidth(width).Render(p)
-		out = append(out, wrapped)
+		out = append(out, ansi.Wrap(p, width, " \t"))
 	}
 	return strings.Join(out, "\n\n")
 }
@@ -367,15 +381,34 @@ func clamp(n, lo, hi int) int {
 	return n
 }
 
+// visWidth is the display width of s, stripping ANSI escape codes and using
+// East-Asian-aware runewidth so wide glyphs (emoji/CJK) match how the terminal
+// renders them.
+func visWidth(s string) int {
+	return runewidth.StringWidth(ansi.Strip(s))
+}
+
 // lineWidth returns the widest line in s (by display width).
 func lineWidth(s string) int {
 	w := 0
 	for _, l := range strings.Split(s, "\n") {
-		if dw := runewidth.StringWidth(l); dw > w {
+		if dw := visWidth(l); dw > w {
 			w = dw
 		}
 	}
 	return w
+}
+
+// fitAnsi pads s to display width w, honouring ANSI and wide (2-cell) glyphs.
+func fitAnsi(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	tw := visWidth(s)
+	if tw < w {
+		return s + strings.Repeat(" ", w-tw)
+	}
+	return s
 }
 
 // enterLevel1 drills from the candidate list into the selected candidate's
