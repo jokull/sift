@@ -247,7 +247,10 @@ func (m *appModel) viewStatus() string {
 	inP, f, d := 0, 0, 0
 	for label, p := range m.progress {
 		switch {
-		case p.Active:
+		// A task is only "in progress" while it still has unaccounted work; once
+		// every thread is resolved (done+failed == total) it is finished, even if
+		// the final "confirmed" update was dropped from the progress channel.
+		case p.Active && p.Done+p.Failed < p.Total:
 			inP++
 			active = append(active, label)
 		case p.Failed > 0:
@@ -279,14 +282,18 @@ func (m *appModel) viewStatus() string {
 }
 
 func taskLine(p triage.Progress, label string) string {
+	// A task is finished once every thread is accounted for (done+failed == total),
+	// regardless of a stale Active flag from a dropped final update.
+	done := !p.Active || p.Done+p.Failed >= p.Total
 	icon := "✓"
 	color := lipgloss.Color("42")
 	state := "confirmed"
-	if p.Active {
+	switch {
+	case !done:
 		icon = "…"
 		color = lipgloss.Color("39")
 		state = "in progress"
-	} else if p.Failed > 0 {
+	case p.Failed > 0:
 		icon = "✗"
 		color = lipgloss.Color("214")
 		state = "failed"
@@ -312,9 +319,9 @@ func taskLine(p triage.Progress, label string) string {
 		counter,
 		bar,
 	)
-	if !p.Active && p.Failed > 0 {
+	if !done && p.Failed > 0 {
 		line += "  " + dimStyle.Render(truncateRunewidth(p.Err, 22))
-	} else if !p.Active && p.Detail != "" {
+	} else if done && p.Detail != "" {
 		line += "  " + accentStyle.Render(truncateRunewidth(p.Detail, 40))
 	}
 	return line

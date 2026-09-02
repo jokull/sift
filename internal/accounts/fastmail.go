@@ -364,28 +364,20 @@ func (s *fastmailSource) Apply(ctx context.Context, threads []*model.Thread, act
 	return nil
 }
 
-// threadEmailIDs resolves every email id belonging to a JMAP thread.
+// threadEmailIDs resolves every email id belonging to a JMAP thread. It uses
+// Thread/get (reliable) rather than the Email/query threadId filter, which
+// Fastmail rejects/returns empty — previously this silently no-op'd Apply.
 func (s *fastmailSource) threadEmailIDs(ctx context.Context, threadID string) ([]string, error) {
-	q := jmap.NewCall("Email/query", map[string]any{
+	tg := jmap.NewCall("Thread/get", map[string]any{
 		"accountId": s.cfg.AccountID,
-		"filter":    map[string]any{"threadId": threadID},
-	}, "qq")
+		"ids":       []string{threadID},
+	}, "t0")
 	var env respEnvelope
-	if err := s.cli.Call(&env, q); err != nil {
+	if err := s.cli.Call(&env, tg); err != nil {
 		return nil, err
 	}
-	for _, resp := range env.MethodResponses {
-		var name string
-		_ = json.Unmarshal(resp[0], &name)
-		if name == "Email/query" {
-			var args struct {
-				IDs []string `json:"ids"`
-			}
-			if err := json.Unmarshal(resp[1], &args); err != nil {
-				return nil, err
-			}
-			return args.IDs, nil
-		}
+	if ids := threadEmailIds(&env); len(ids) > 0 {
+		return ids, nil
 	}
 	return nil, nil
 }

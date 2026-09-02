@@ -52,10 +52,11 @@ sift list            # print the merged inbox threads (read-only)
 
 The list shows threads needing a decision, newest first. Each row is a decision
 **window**: its AI-suggested action, sender, subject, account, age, and how many
-threads from that sender would be affected (`×N`). The `×N` cohort counts threads
-from the same sender **across the whole loaded inbox** (not just the rows visible
-in the list), scoped to that thread's category so a bulk action never drags in
-unmatching mail (e.g. receipts next to a promo).
+threads from that sender would be affected (`×N`). The `×N` cohort counts the
+sender's triage threads (any category) **across the whole loaded inbox**, so a
+bulk action (`A`/`U`/`R`/`N`) acts on the whole sender. Receipts/newsletters
+(auto-handled) and keeps stay out of the cohort — they are never dragged into an
+archive.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐

@@ -217,13 +217,13 @@ func (e *Engine) classifyAndBuild(ctx context.Context, threads []*model.Thread, 
 			// personal/meaningful — never asked, stays in inbox
 		default:
 			// promotion/transactional/actionable/unknown → decision window.
-			// Cohort = threads from the same sender group (registered domain)
-			// sharing the candidate's category, so brand aliases aggregate while
-			// unrelated mail (e.g. security alerts next to promotions on a shared
-			// domain) stays out of the bulk action.
+			// Cohort = the sender's triage threads across categories, so a bulk
+			// decision acts on the whole sender (not just one category). Auto
+			// actions (receipts/newsletters) and keep-stays-inbox are excluded —
+			// they are handled on their own, never dragged into an archive.
 			cohort := make([]*model.Thread, 0, len(bySender[t.SenderKey()]))
 			for _, ct := range bySender[t.SenderKey()] {
-				if preds[ct.ID].Category == p.Category {
+				if isTriageCategory(preds[ct.ID].Category) {
 					cohort = append(cohort, ct)
 				}
 			}
@@ -239,6 +239,16 @@ func (e *Engine) classifyAndBuild(ctx context.Context, threads []*model.Thread, 
 	sort.Slice(plan.Candidates, func(i, j int) bool {
 		return plan.Candidates[i].Thread.Date.After(plan.Candidates[j].Thread.Date)
 	})
+}
+
+// isTriageCategory reports whether a category produces a decision candidate
+// (as opposed to an auto action or keep-stays-in-inbox).
+func isTriageCategory(c model.Category) bool {
+	switch c {
+	case model.CategoryReceipt, model.CategoryNewsletter, model.CategoryKeep:
+		return false
+	}
+	return true
 }
 
 // classify returns a prediction per thread, using cache first then one batched

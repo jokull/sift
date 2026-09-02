@@ -228,10 +228,11 @@ func (m *appModel) applyDecision(idx int, action model.Action, wholeCohort bool)
 	// whole-cohort/hulk action — every row sharing the same sender-group+category.
 	var handled []*triage.Candidate
 	if wholeCohort {
+		// A bulk decision acts on every triage candidate from this sender,
+		// across categories (auto actions and keeps are handled separately).
 		group := can.Thread.SenderKey()
-		cat := can.Pred.Category
 		for _, c := range m.candidates {
-			if c.Thread.SenderKey() == group && c.Pred.Category == cat {
+			if c.Thread.SenderKey() == group {
 				handled = append(handled, c)
 			}
 		}
