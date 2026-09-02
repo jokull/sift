@@ -23,11 +23,23 @@ type appModel struct {
 
 	candidates []*triage.Candidate
 	autoJobs   []triage.AutoJob
-	today      []*model.Thread
 	stats      triage.Stats
 	warnings   []string
 
 	cursor int
+
+	// Drilldown navigation: candidates ▸ threads ▸ messages.
+	level           int
+	selThread       int
+	selMsg          int
+	threads         []*model.Thread
+	messages        []*model.Message
+	messagesLoading bool
+	messagesErr     string
+	msgScroll       int
+	msgWidth        int
+	msgLines        []string
+	msgStarts       []int
 
 	detail *detailModel
 
@@ -37,12 +49,19 @@ type appModel struct {
 	width    int
 	height   int
 	now      time.Time
+	frame    int // spinner frame while loading
 }
 
 type loadedMsg struct{ plan *triage.Plan }
 type progressMsg struct{ u triage.Progress }
 type tickMsg struct{}
 type errMsg struct{ err error }
+type bootProgressMsg struct{ text string }
+type messagesMsg struct {
+	threadID string
+	msgs     []*model.Message
+	err      error
+}
 
 // New builds the TUI state and binds the cancellation context.
 func New(engine *triage.Engine, worker *triage.Worker, store *state.Store, ctx context.Context) *appModel {
@@ -58,7 +77,8 @@ func New(engine *triage.Engine, worker *triage.Worker, store *state.Store, ctx c
 
 func (m *appModel) Init() tea.Cmd {
 	m.loadingMsg = "Fetching inboxes…"
-	return tea.Batch(m.waitProgress(), m.loadPlan())
+	m.frame = 0
+	return tea.Batch(m.bootLoop(), m.loadPlan())
 }
 
 func (m *appModel) loadPlan() tea.Cmd {
@@ -88,29 +108,73 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateKey(msg)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		return m, m.waitProgress()
+		return m, m.idleCmd()
 	case loadedMsg:
 		m.loaded = true
 		m.candidates = msg.plan.Candidates
 		m.autoJobs = msg.plan.Auto
-		m.today = msg.plan.Today
 		m.stats = msg.plan.Stats
 		m.warnings = msg.plan.Warnings
 		m.loadingMsg = ""
+		m.level = levelList
+		m.threads = nil
+		m.messages = nil
+		m.messagesLoading = false
+		m.messagesErr = ""
+		m.msgScroll = 0
 		m.submitAutoJobs()
 		return m, m.waitProgress()
 	case errMsg:
 		m.loadingMsg = ""
+		// Surface the error in the main view instead of spinning forever.
+		m.loaded = true
 		m.warnings = []string{"ERROR: " + msg.err.Error()}
 		return m, m.waitProgress()
 	case progressMsg:
 		u := msg.u
 		m.progress[u.Label] = u
 		return m, m.waitProgress()
+	case bootProgressMsg:
+		if m.loaded {
+			return m, m.waitProgress()
+		}
+		m.frame++
+		m.loadingMsg = msg.text
+		return m, m.bootLoop()
+	case messagesMsg:
+		return m, m.onMessages(msg)
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
 	case tickMsg:
+		if !m.loaded {
+			m.frame++
+			return m, m.bootLoop()
+		}
 		return m, m.waitProgress()
 	}
-	return m, m.waitProgress()
+	return m, m.idleCmd()
+}
+
+// idleCmd keeps the right loop running: while booting, drive the spinner and
+// boot progress; once loaded, poll the worker HUD.
+func (m *appModel) idleCmd() tea.Cmd {
+	if !m.loaded {
+		return m.bootLoop()
+	}
+	return m.waitProgress()
+}
+
+// bootLoop animates the loading screen. It returns the next boot progress stage
+// when one is available, otherwise a spinner tick.
+func (m *appModel) bootLoop() tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case s := <-m.engine.Progress():
+			return bootProgressMsg{text: s}
+		case <-time.After(spinnerInterval):
+			return tickMsg{}
+		}
+	}
 }
 
 func (m *appModel) submitAutoJobs() {
@@ -230,9 +294,4 @@ func actionName(a model.Action) string {
 		return "reading"
 	}
 	return string(a)
-}
-
-func planStatus(plan *triage.Plan) string {
-	return fmt.Sprintf("%d to review · %d auto-pluck (receipts) · %d auto-read · %d today untouched",
-		len(plan.Candidates), plan.Stats.AutoReceipts, plan.Stats.AutoReading, len(plan.Today))
 }

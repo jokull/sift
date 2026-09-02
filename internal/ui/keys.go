@@ -22,15 +22,19 @@ func (m *appModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
 		return m.quit()
+	case "right", "l":
+		return m.drillRight()
+	case "left", "h", "b", "esc":
+		return m.drillLeft()
 	case "j", "down":
-		m.move(1)
+		m.moveCursor(1)
 	case "k", "up":
-		m.move(-1)
+		m.moveCursor(-1)
 	case "g":
-		m.cursor = 0
+		m.jumpCursor(0)
 	case "G":
-		m.cursor = len(m.candidates) - 1
-	case "enter", " ", "l":
+		m.jumpCursor(-1)
+	case "enter", " ":
 		if m.detailOpenEnabled() {
 			m.openDetail()
 		}
@@ -103,8 +107,6 @@ func (m *appModel) handleKeep(idx int) {
 	if idx < 0 || idx >= len(m.candidates) {
 		return
 	}
-	var c *model.Candidate
-	_ = c
 	can := m.candidates[idx]
 	if m.store != nil && (can.Pred.Category == model.CategoryPromotion || can.Pred.Category == model.CategoryTransactional) {
 		_ = m.store.AddWhitelist(can.Thread.SenderKey())

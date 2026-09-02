@@ -19,7 +19,6 @@ func TestRenderListAndDetail(t *testing.T) {
 			{Thread: &model.Thread{ID: "1", Account: model.AccountGmail, Subject: "Your invoice", FromEmail: "billing@x.com", FromName: "Billing", Date: now.Add(-2 * time.Hour), MessageCount: 1}, Pred: model.Prediction{Category: model.CategoryReceipt, Action: model.ActionReceipts, Confidence: 0.9}},
 			{Thread: &model.Thread{ID: "2", Account: model.AccountFastmail, Subject: "New letter from friend", FromEmail: "friend@y.com", Date: now.Add(-5 * time.Hour)}, Pred: model.Prediction{Category: model.CategoryKeep, Action: model.ActionKeep, Confidence: 0.8}},
 		},
-		today:   []*model.Thread{{ID: "3", Account: model.AccountFastmail, Date: now}},
 		progress: map[string]triage.Progress{
 			"gmail → archive": {Label: "gmail → archive", Account: model.AccountGmail, Total: 5, Done: 2, Active: true},
 			"fastmail → receipts": {Label: "fastmail → receipts", Account: model.AccountFastmail, Total: 15, Done: 15},
@@ -46,4 +45,16 @@ func TestRenderListAndDetail(t *testing.T) {
 		t.Fatalf("detail view missing content:\n%s", out2)
 	}
 	_ = context.Background
+}
+
+func TestViewLoadingShowsProgress(t *testing.T) {
+	m := &appModel{loadingMsg: "Fetching inboxes…", frame: 0}
+	out := m.View()
+	if !strings.Contains(out, "Fetching inboxes…") {
+		t.Fatalf("loading view missing progress message:\n%s", out)
+	}
+	// A spinner frame is rendered alongside the message.
+	if !strings.Contains(out, spinnerFrames[0]) {
+		t.Fatalf("loading view missing spinner frame:\n%s", out)
+	}
 }

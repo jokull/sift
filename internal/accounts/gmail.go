@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -197,6 +198,114 @@ func (g *gmailSource) ListThreads(ctx context.Context, limit int) ([]*model.Thre
 		threads = threads[:limit]
 	}
 	return threads, nil
+}
+
+// gmailHeader is a single message header.
+type gmailHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// gmailMsgPayload recurses through a Gmail message's MIME payload.
+type gmailMsgPayload struct {
+	MimeType string          `json:"mimeType"`
+	Body     struct {
+		Data string `json:"data"`
+	} `json:"body"`
+	Headers []gmailHeader  `json:"headers"`
+	Parts   []gmailMsgPayload `json:"parts"`
+}
+
+type gmailMsg struct {
+	ID           string          `json:"id"`
+	ThreadID     string          `json:"threadId"`
+	InternalDate string          `json:"internalDate"`
+	Payload      gmailMsgPayload `json:"payload"`
+}
+
+// ListMessages returns a thread's messages, oldest first, each with its
+// plain-text body (walking MIME parts, decoding base64url and converting HTML).
+func (g *gmailSource) ListMessages(ctx context.Context, thread *model.Thread) ([]*model.Message, error) {
+	if thread == nil {
+		return nil, nil
+	}
+	out, err := g.gog(ctx, "gmail", "thread", "get", thread.ID, "--full",
+		"-a", g.cfg.Account, "--results-only", "-j", "--no-input")
+	if err != nil {
+		return nil, gogHint("gmail thread get", err, out)
+	}
+	var resp struct {
+		Thread struct {
+			Messages []gmailMsg `json:"messages"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return nil, fmt.Errorf("parse gog thread get: %w", err)
+	}
+	msgs := make([]*model.Message, 0, len(resp.Thread.Messages))
+	for _, m := range resp.Thread.Messages {
+		fromName, fromEmail := splitFrom(headerValue(m.Payload.Headers, "From"))
+		msg := &model.Message{
+			ID:        m.ID,
+			ThreadID:  thread.ID,
+			Account:   model.AccountGmail,
+			Subject:   headerValue(m.Payload.Headers, "Subject"),
+			FromName:  fromName,
+			FromEmail: strings.ToLower(fromEmail),
+			Date:      parseUnixMillis(m.InternalDate),
+			BodyText:  m.Payload.bodyText(),
+		}
+		if to := headerValue(m.Payload.Headers, "To"); to != "" {
+			msg.To = splitToList(to)
+		}
+		msgs = append(msgs, msg)
+	}
+	sortMessagesOldest(msgs)
+	return msgs, nil
+}
+
+func headerValue(hs []gmailHeader, name string) string {
+	for _, h := range hs {
+		if strings.EqualFold(h.Name, name) {
+			return strings.TrimSpace(h.Value)
+		}
+	}
+	return ""
+}
+
+// bodyText walks the MIME payload, preferring text/plain and converting the
+// first HTML fallback, skipping attachments.
+func (p gmailMsgPayload) bodyText() string {
+	var sb strings.Builder
+	p.appendText(&sb)
+	return strings.TrimSpace(sb.String())
+}
+
+func (p gmailMsgPayload) appendText(sb *strings.Builder) {
+	mt := strings.ToLower(p.MimeType)
+	body := decodeBase64URL(p.Body.Data)
+	switch {
+	case mt == "text/plain":
+		sb.WriteString(body)
+		sb.WriteString("\n\n")
+	case strings.HasPrefix(mt, "text/html"):
+		sb.WriteString(htmlToText(body))
+		sb.WriteString("\n\n")
+	}
+	for _, part := range p.Parts {
+		part.appendText(sb)
+	}
+}
+
+func parseUnixMillis(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(n).UTC()
 }
 
 func (g *gmailSource) Apply(ctx context.Context, threads []*model.Thread, action model.Action) error {

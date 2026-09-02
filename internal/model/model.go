@@ -35,16 +35,6 @@ func (t *Thread) SenderKey() string {
 	return t.FromName
 }
 
-// IsToday reports whether the thread's most recent message arrived on the given
-// local date. Today's mail is deliberately left untouched by triage.
-func (t *Thread) IsToday(now time.Time) bool {
-	nyt := t.Date.In(now.Location())
-	nt := now.In(now.Location())
-	y, m, d := nyt.Date()
-	yt, mt, dt := nt.Date()
-	return y == yt && m == mt && d == dt
-}
-
 // Message is a single email within a thread (used for the detail pane).
 type Message struct {
 	ID        string

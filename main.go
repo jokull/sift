@@ -338,7 +338,7 @@ func runUI(dryRun bool) error {
 	defer worker.Close()
 
 	app := ui.New(engine, worker, store, ctx)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("tui: %w", err)
 	}
@@ -381,8 +381,8 @@ func runPlan() {
 	if err != nil {
 		fatal("load: %v", err)
 	}
-	fmt.Printf("loaded=%d  today_untouched=%d  receipts=%d  reading=%d  candidates=%d  kept_inline=%d\n",
-		plan.Stats.Loaded, plan.Stats.Protected, plan.Stats.AutoReceipts, plan.Stats.AutoReading,
+	fmt.Printf("loaded=%d  receipts=%d  reading=%d  candidates=%d  kept_inline=%d\n",
+		plan.Stats.Loaded, plan.Stats.AutoReceipts, plan.Stats.AutoReading,
 		plan.Stats.Candidates, plan.Stats.KeptInline)
 	for _, w := range plan.Warnings {
 		fmt.Printf("warning: %s\n", w)

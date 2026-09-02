@@ -33,6 +33,9 @@ type Source interface {
 	// UnsubscribeInfo returns the parsed List-Unsubscribe header(s) for a thread,
 	// used to actually unsubscribe from a mailing list.
 	UnsubscribeInfo(ctx context.Context, thread *model.Thread) (*model.UnsubscribeInfo, error)
+	// ListMessages returns the messages of a thread in chronological order, each
+	// carrying its plain-text body (HTML converted) for the drilldown view.
+	ListMessages(ctx context.Context, thread *model.Thread) ([]*model.Message, error)
 }
 
 // New builds the configured sources. At least one account must be present.

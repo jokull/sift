@@ -146,6 +146,167 @@ func (s *fastmailSource) ListThreads(ctx context.Context, limit int) ([]*model.T
 	return threads, nil
 }
 
+// bodyPart and bodyValue mirror the JMAP Email body properties.
+type bodyPart struct {
+	PartID   string `json:"partId"`
+	MimeType string `json:"mimeType"`
+}
+type bodyValue struct {
+	Value    string `json:"value"`
+	Encoding string `json:"encoding"`
+}
+
+// emailGetRow is the JMAP Email properties requested for message bodies.
+type emailGetRow struct {
+	ID         string `json:"id"`
+	Subject    string `json:"subject"`
+	Preview    string `json:"preview"`
+	From       []struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	} `json:"from"`
+	To []struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	} `json:"to"`
+	ReceivedAt string      `json:"receivedAt"`
+	TextBody   []bodyPart  `json:"textBody"`
+	HtmlBody   []bodyPart  `json:"htmlBody"`
+	BodyValues map[string]bodyValue `json:"bodyValues"`
+}
+
+// ListMessages returns a thread's messages, oldest first, each with its
+// plain-text body (HTML converted where no text part exists).
+func (s *fastmailSource) ListMessages(ctx context.Context, thread *model.Thread) ([]*model.Message, error) {
+	if thread == nil {
+		return nil, nil
+	}
+	// Resolve the thread's email ids. Thread/get is reliable; the Email/query
+	// threadId filter is not.
+	tg := jmap.NewCall("Thread/get", map[string]any{
+		"accountId": s.cfg.AccountID,
+		"ids":       []string{thread.ID},
+	}, "t0")
+	var env respEnvelope
+	if err := s.cli.Call(&env, tg); err != nil {
+		return nil, err
+	}
+	emailIDs := threadEmailIds(&env)
+	if len(emailIDs) == 0 {
+		return nil, nil
+	}
+
+	g := jmap.NewCall("Email/get", map[string]any{
+		"accountId": s.cfg.AccountID,
+		"ids":       emailIDs,
+		"properties": []string{"subject", "from", "to", "receivedAt", "preview", "textBody", "htmlBody", "bodyValues"},
+	}, "g0")
+	var env2 respEnvelope
+	if err := s.cli.Call(&env2, g); err != nil {
+		return nil, err
+	}
+
+	var msgs []*model.Message
+	for _, resp := range env2.MethodResponses {
+		var name string
+		_ = json.Unmarshal(resp[0], &name)
+		if name != "Email/get" {
+			continue
+		}
+		var args struct {
+			List []emailGetRow `json:"list"`
+		}
+		if err := json.Unmarshal(resp[1], &args); err != nil {
+			return nil, err
+		}
+		for _, e := range args.List {
+			body := plaintextFromBody(e.TextBody, e.HtmlBody, e.BodyValues)
+			if body == "" {
+				body = strings.TrimSpace(e.Preview)
+			}
+			m := &model.Message{
+				ID:       e.ID,
+				ThreadID: thread.ID,
+				Account:  model.AccountFastmail,
+				Subject:  e.Subject,
+				Date:     parseRFC3339(e.ReceivedAt),
+				BodyText: body,
+			}
+			if len(e.From) > 0 {
+				m.FromName = e.From[0].Name
+				m.FromEmail = strings.ToLower(e.From[0].Email)
+			}
+			for _, a := range e.To {
+				m.To = append(m.To, addr(a.Email, a.Name))
+			}
+			msgs = append(msgs, m)
+		}
+		break
+	}
+	sortMessagesOldest(msgs)
+	return msgs, nil
+}
+
+// threadEmailIds extracts email ids from a Thread/get response.
+func threadEmailIds(env *respEnvelope) []string {
+	for _, resp := range env.MethodResponses {
+		var name string
+		_ = json.Unmarshal(resp[0], &name)
+		if name != "Thread/get" {
+			continue
+		}
+		var args struct {
+			List []struct {
+				EmailIDs []string `json:"emailIds"`
+			} `json:"list"`
+		}
+		if err := json.Unmarshal(resp[1], &args); err != nil {
+			return nil
+		}
+		for _, t := range args.List {
+			if len(t.EmailIDs) > 0 {
+				return t.EmailIDs
+			}
+		}
+	}
+	return nil
+}
+
+// plaintextFromBody assembles the plain text of an email from its text (or HTML)
+// body parts, probing the JMAP bodyValues map.
+func plaintextFromBody(text, html []bodyPart, bv map[string]bodyValue) string {
+	parts := text
+	isHTML := false
+	if len(parts) == 0 {
+		parts = html
+		isHTML = true
+	}
+	var sb strings.Builder
+	for _, p := range parts {
+		v, ok := bv[p.PartID]
+		if !ok {
+			continue
+		}
+		val := decodeBody(v.Encoding, v.Value)
+		if isHTML {
+			val = htmlToText(val)
+		}
+		if v := strings.TrimSpace(val); v != "" {
+			sb.WriteString(v)
+			sb.WriteString("\n\n")
+		}
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func sortMessagesOldest(msgs []*model.Message) {
+	for i := 1; i < len(msgs); i++ {
+		for j := i; j > 0 && msgs[j].Date.Before(msgs[j-1].Date); j-- {
+			msgs[j], msgs[j-1] = msgs[j-1], msgs[j]
+		}
+	}
+}
+
 // Apply moves whole threads to a destination folder (or archives them).
 func (s *fastmailSource) Apply(ctx context.Context, threads []*model.Thread, action model.Action) error {
 	if len(threads) == 0 {

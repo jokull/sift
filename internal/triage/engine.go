@@ -18,10 +18,9 @@ import (
 // Candidate is a thread that needs a decision, carrying its prediction and the
 // sender cohort used for "how many would be archived" context.
 type Candidate struct {
-	Thread    *model.Thread
-	Pred      model.Prediction
-	Protected bool               // today's mail — never auto-acted on
-	Cohort    []*model.Thread    // other loaded threads from the same sender
+	Thread *model.Thread
+	Pred   model.Prediction
+	Cohort []*model.Thread // other loaded threads from the same sender
 }
 
 // CohortCount returns how many threads share this candidate's sender.
@@ -44,7 +43,6 @@ type Result struct {
 // Stats summarizes a load.
 type Stats struct {
 	Loaded       int
-	Protected    int
 	AutoReceipts int
 	AutoReading  int
 	Candidates   int
@@ -57,7 +55,6 @@ type Stats struct {
 type Plan struct {
 	Candidates []*Candidate
 	Auto       []AutoJob
-	Today      []*model.Thread
 	Stats      Stats
 	Warnings   []string // non-fatal per-account problems (e.g. gog keychain over SSH)
 }
@@ -69,6 +66,7 @@ type Engine struct {
 	store   *state.Store
 	now     time.Time
 	order   []model.Account
+	boot    chan string // boot-stage progress updates (consumed by the TUI)
 }
 
 // New builds an engine.
@@ -78,7 +76,23 @@ func New(sources map[model.Account]accounts.Source, aiClient *ai.Client, store *
 		order = append(order, a)
 	}
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
-	return &Engine{sources: sources, ai: aiClient, store: store, now: time.Now(), order: order}
+	return &Engine{sources: sources, ai: aiClient, store: store, now: time.Now(), order: order, boot: make(chan string, 64)}
+}
+
+// Progress returns a channel of boot-stage updates (e.g. "fetching fastmail…").
+// It is drained by the TUI to show work happening while loading.
+func (e *Engine) Progress() <-chan string { return e.boot }
+
+// report emits a non-blocking boot progress update. The buffered channel lets
+// progress lag the UI without ever blocking a load.
+func (e *Engine) report(format string, args ...any) {
+	if e.boot == nil {
+		return
+	}
+	select {
+	case e.boot <- fmt.Sprintf(format, args...):
+	default:
+	}
 }
 
 // Load fetches, classifies and partitions the inboxes.
@@ -88,8 +102,21 @@ func (e *Engine) Load(ctx context.Context) (*Plan, error) {
 		return nil, err
 	}
 	plan := &Plan{Warnings: warnings}
-	e.protectAndClassify(ctx, threads, plan)
+	e.classifyAndBuild(ctx, threads, plan)
 	return plan, nil
+}
+
+// Messages fetches a thread's messages (plaintext bodies) from its account
+// source, for the drilldown view.
+func (e *Engine) Messages(ctx context.Context, thread *model.Thread) ([]*model.Message, error) {
+	if thread == nil {
+		return nil, nil
+	}
+	src := e.sources[thread.Account]
+	if src == nil {
+		return nil, fmt.Errorf("no account source for %s", thread.Account)
+	}
+	return src.ListMessages(ctx, thread)
 }
 
 func (e *Engine) loadThreads(ctx context.Context) ([]*model.Thread, []string, error) {
@@ -108,7 +135,9 @@ func (e *Engine) loadThreads(ctx context.Context) ([]*model.Thread, []string, er
 		wg.Add(1)
 		go func(acct model.Account, src accounts.Source) {
 			defer wg.Done()
+			e.report("fetching %s…", acct)
 			ts, err := src.ListThreads(ctx, 200)
+			e.report("loaded %s: %d threads", acct, len(ts))
 			results <- res{acct, ts, err}
 		}(acct, src)
 	}
@@ -131,32 +160,24 @@ func (e *Engine) loadThreads(ctx context.Context) ([]*model.Thread, []string, er
 	return all, warnings, nil
 }
 
-func (e *Engine) protectAndClassify(ctx context.Context, threads []*model.Thread, plan *Plan) {
+// classifyAndBuild classifies every thread and partitions them into the plan:
+// receipts/newsletters auto-pluck, keep stays in the inbox, and everything else
+// becomes a decision candidate (already newest first).
+func (e *Engine) classifyAndBuild(ctx context.Context, threads []*model.Thread, plan *Plan) {
 	plan.Stats.Loaded = len(threads)
 
-	// Protect today's mail; keep it for display but never act on it.
-	var toClassify []*model.Thread
-	for _, t := range threads {
-		if t.IsToday(e.now) {
-			plan.Today = append(plan.Today, t)
-			plan.Stats.Protected++
-			continue
-		}
-		toClassify = append(toClassify, t)
-	}
+	preds := e.classify(ctx, threads)
 
-	preds := e.classify(ctx, toClassify)
-
-	// Precompute sender cohorts over the non-protected (loaded) set, keyed by the
-	// exact sender so a cohort spans the whole loaded inbox (not just the rows
-	// visible in the list). Each cohort is scoped to the candidate's category so
-	// a bulk action never drags in unmatching mail (e.g. receipts next to promos).
+	// Precompute sender cohorts over the loaded set, keyed by the exact sender so
+	// a cohort spans the whole loaded inbox (not just the rows visible in the
+	// list). Each cohort is scoped to the candidate's category so a bulk action
+	// never drags in unmatching mail (e.g. receipts next to promos).
 	bySender := map[string][]*model.Thread{}
-	for _, t := range toClassify {
+	for _, t := range threads {
 		bySender[t.SenderKey()] = append(bySender[t.SenderKey()], t)
 	}
 
-	for _, t := range toClassify {
+	for _, t := range threads {
 		p := preds[t.ID]
 		key := t.SenderKey()
 
@@ -196,10 +217,10 @@ func (e *Engine) protectAndClassify(ctx context.Context, threads []*model.Thread
 			// personal/meaningful — never asked, stays in inbox
 		default:
 			// promotion/transactional/actionable/unknown → decision window.
-			// Cohort = non-today threads from the same sender group (registered
-			// domain) sharing the candidate's category, so brand aliases
-			// aggregate while unrelated mail (e.g. security alerts next to
-			// promotions on a shared domain) stays out of the bulk action.
+			// Cohort = threads from the same sender group (registered domain)
+			// sharing the candidate's category, so brand aliases aggregate while
+			// unrelated mail (e.g. security alerts next to promotions on a shared
+			// domain) stays out of the bulk action.
 			cohort := make([]*model.Thread, 0, len(bySender[t.SenderKey()]))
 			for _, ct := range bySender[t.SenderKey()] {
 				if preds[ct.ID].Category == p.Category {
@@ -235,12 +256,18 @@ func (e *Engine) classify(ctx context.Context, threads []*model.Thread) map[stri
 		uncached = append(uncached, t)
 	}
 
-	if len(uncached) > 0 && e.ai != nil {
+	if len(uncached) == 0 {
+		return preds
+	}
+	e.report("classifying %d threads…", len(uncached))
+	if e.ai != nil {
 		const chunk = 30
-		for start := 0; start < len(uncached); start += chunk {
+		total := len(uncached)
+		done := 0
+		for start := 0; start < total; start += chunk {
 			end := start + chunk
-			if end > len(uncached) {
-				end = len(uncached)
+			if end > total {
+				end = total
 			}
 			batch := uncached[start:end]
 			res, err := e.ai.ClassifyThreads(ctx, batch)
@@ -249,6 +276,8 @@ func (e *Engine) classify(ctx context.Context, threads []*model.Thread) map[stri
 				for _, t := range batch {
 					preds[t.ID] = heuristic(t)
 				}
+				done += len(batch)
+				e.report("classifying %d/%d", done, total)
 				continue
 			}
 			for _, t := range batch {
@@ -261,8 +290,10 @@ func (e *Engine) classify(ctx context.Context, threads []*model.Thread) map[stri
 					_ = e.store.SaveClassification(string(t.Account), t.ID, p)
 				}
 			}
+			done += len(batch)
+			e.report("classifying %d/%d", done, total)
 		}
-	} else if len(uncached) > 0 {
+	} else {
 		for _, t := range uncached {
 			preds[t.ID] = heuristic(t)
 		}

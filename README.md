@@ -18,7 +18,6 @@ your rules:
 
 | Category | Behaviour |
 | --- | --- |
-| **Today's mail** | never touched — left in the inbox |
 | **Receipts** (invoices, orders, payments) | auto-pluck → `Receipts` folder |
 | **Newsletters** (Substack, Figma, digests) | auto-pluck → `Reading` folder |
 | **Promotions** | decision per sender → archive / unsubscribe / whitelist |
@@ -68,18 +67,23 @@ Press `⏎` on a row for the full decision window (sender, cohort "would be
 affected" context, the AI's reasoning), then pick an action. Async actions run
 in the background and stream into a **HUD** at the bottom with live status.
 
-### Keys
+### Drilldown (arrow keys)
 
-| Key | Action |
-| --- | --- |
-| `↑`/`↓` or `j`/`k` | navigate |
-| `⏎` / `space` | open the decision window |
-| `a` / `u` / `r` / `n` | archive / unsubscribe / receipts / reading (this thread) |
-| `s` | keep (whitelist sender for promotions; stays in inbox) |
-| `A` / `U` / `R` / `N` | same, applied to **every** thread from that sender |
-| `x` (in window) | apply the AI default action to the whole sender cohort |
-| `b` / `esc` | back |
-| `q` / `ctrl-c` | quit |
+`→` / `l` drills into a thread three levels deep, compacting the earlier columns
+into narrow sidebars as you go (the focused column keeps the width):
+
+1. **candidates** — the triage list (level 0).
+2. **threads** — `→` shows every thread from that sender (its cohort).
+3. **messages** — `→` again shows the thread's messages with their **plain
+   text** bodies (HTML is converted; replies are shown linearly, not nested).
+
+`←` / `h` / `esc` steps back up a level; `j`/`k` moves the cursor in the focused
+column; `g`/`G` jump to the top/bottom. The mouse wheel scrolls the focused
+column (and the message pane), so long bodies scroll smoothly.
+
+> **Fastmail bodies:** Fastmail stores email bodies as downloadable blobs; for
+> emails where the body isn't returned inline `sift` falls back to the message
+> *preview* snippet. Gmail bodies are always full plain text.
 
 ## Setup / config
 
@@ -161,7 +165,6 @@ go build -o sift .
 
 ## Safety
 
-- **Today's mail is never touched.**
 - Unknown / low-confidence threads are **never archived** — they default to
   keep.
 - Gmail target labels (`Receipts`, `Reading`) are created automatically if

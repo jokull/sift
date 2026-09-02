@@ -47,14 +47,19 @@ var accountStyle = map[model.Account]lipgloss.Style{
 	model.AccountGmail:    lipgloss.NewStyle().Foreground(lipgloss.Color("105")),
 }
 
+const spinnerInterval = 120 * time.Millisecond
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 func (m *appModel) viewLoading() string {
 	if m.loadingMsg == "" {
 		m.loadingMsg = "Loading…"
 	}
+	spinner := spinnerFrames[m.frame%len(spinnerFrames)]
 	return lipgloss.JoinVertical(lipgloss.Left,
 		titleStyle.Render("sift")+"  "+subStyle.Render("inbox triage"),
 		"",
-		dimStyle.Render(m.loadingMsg),
+		dimStyle.Render(spinner+" "+m.loadingMsg),
 	)
 }
 
@@ -108,7 +113,7 @@ func (m *appModel) View() string {
 		b.WriteString("\n\n")
 		bodyLines -= dl + 1
 	}
-	b.WriteString(m.viewListWindow(bodyLines))
+	b.WriteString(m.renderDrill(bodyLines))
 
 	if hud != "" {
 		b.WriteString("\n")
@@ -121,7 +126,9 @@ func (m *appModel) View() string {
 
 func (m *appModel) helpPanel() string {
 	rows := []string{
-		"↑/↓ or j/k   navigate",
+		"→ / l        drill down (threads → messages)",
+		"← / h / esc  back up a level",
+		"↑/↓ or j/k   move the focused column",
 		"⏎ / space    open decision window",
 		"a            archive this thread",
 		"u            unsubscribe sender (archive + remember)",
@@ -130,7 +137,7 @@ func (m *appModel) helpPanel() string {
 		"s            keep (whitelist sender; stays in inbox)",
 		"A/U/R/N      same, applied to every thread from that sender",
 		"x (window)   apply AI default action to whole sender cohort",
-		"b / esc      back · q quit",
+		"q quit · scroll with mouse",
 	}
 	return sectStyle.Render("── help ──\n") + strings.Join(rows, "\n")
 }
@@ -139,9 +146,12 @@ func (m *appModel) helpPanel() string {
 // with transient progress (that belongs to the HUD below).
 func (m *appModel) viewHeader() string {
 	title := titleStyle.Render("sift") + "  " + subStyle.Render("inbox triage — newest → oldest")
-	stats := fmt.Sprintf("%d to review · %d auto-pluck (receipts) · %d auto-read · %d today untouched",
-		len(m.candidates), m.stats.AutoReceipts, m.stats.AutoReading, len(m.today))
+	stats := fmt.Sprintf("%d to review · %d auto-pluck (receipts) · %d auto-read",
+		len(m.candidates), m.stats.AutoReceipts, m.stats.AutoReading)
 	line := title + "\n" + statsStyle.Render(stats)
+	if sub := m.drillSubtitle(); sub != "" {
+		line += "\n" + accentStyle.Render("▶ ") + dimStyle.Render(sub)
+	}
 	if len(m.warnings) > 0 {
 		line += "\n" + warnStyle.Render("⚠ "+m.warnings[0])
 	}
@@ -150,11 +160,7 @@ func (m *appModel) viewHeader() string {
 
 func (m *appModel) viewListWindow(n int) string {
 	if len(m.candidates) == 0 {
-		msg := "All clear — nothing needs a decision."
-		if len(m.today) > 0 {
-			msg = fmt.Sprintf("All clear — nothing needs a decision. (%d today left untouched.)", len(m.today))
-		}
-		return dimStyle.Render(msg)
+		return dimStyle.Render("All clear — nothing needs a decision.")
 	}
 	if n <= 0 {
 		n = 1
@@ -323,7 +329,7 @@ func sortStrings(s []string) {
 }
 
 func (m *appModel) viewFooter() string {
-	return dimStyle.Render("j/k move · ⏎ detail · a/u/r/n act · A/U/R/N cohort · s keep · q quit · ? help")
+	return dimStyle.Render("→/← drill · j/k move · ⏎ detail · a/u/r/n act · A/U/R/N cohort · s keep · q quit · ? help")
 }
 
 func accountTag(a model.Account) string {

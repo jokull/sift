@@ -46,21 +46,6 @@ func (p Prediction) IsAuto() bool {
 	return p.Action == ActionReceipts || p.Action == ActionReading
 }
 
-// Candidate is the triage row: a thread plus its prediction, and a snapshot of
-// the sender cohort used to give "how many would be archived" context.
-type Candidate struct {
-	Thread    *Thread
-	Pred      Prediction
-	Protected bool // today's mail — leave untouched regardless
-
-	// SenderCohort is the set of *other* loaded threads sharing the same sender
-	// that would fall under the same decision (used for bulk context).
-	SenderCohort []*Thread
-}
-
-// Descriptor summarizes a candidate for a single decision line.
-func (c *Candidate) CohortCount() int { return len(c.SenderCohort) }
-
 // UnsubscribeInfo carries the parsed List-Unsubscribe header(s) from a message,
 // used to actually unsubscribe from a mailing list (RFC 8058 one-click where
 // available).
