@@ -18,7 +18,9 @@ var (
 	sectStyle   = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("238"))
 	ruleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
 	headerStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("240"))
-	selStyle    = lipgloss.NewStyle().Background(lipgloss.Color("238"))
+	selBG       = lipgloss.Color("238")
+	selStyle    = lipgloss.NewStyle().Background(selBG)
+	noStyle     = lipgloss.NewStyle()
 	dimStyle    = lipgloss.NewStyle().Faint(true)
 	accentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	warnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
@@ -141,6 +143,7 @@ func (m *appModel) helpPanel() string {
 		"k            keep (whitelist sender; stays in inbox)",
 		"s            spam",
 		"d            delete (move to trash)",
+		"i            toggle unread-only",
 		"A/U/R/N      cohort archive/unsubscribe/receipts/reading",
 		"K/S/D        cohort keep/spam/delete",
 		"x (window)   apply AI default action to whole sender cohort",
@@ -155,6 +158,9 @@ func (m *appModel) viewHeader() string {
 	title := titleStyle.Render("sift") + "  " + subStyle.Render("inbox triage — newest → oldest")
 	stats := fmt.Sprintf("%d to review · %d auto-pluck (receipts) · %d auto-read",
 		len(m.candidates), m.stats.AutoReceipts, m.stats.AutoReading)
+	if m.showUnread {
+		stats += " · " + accentStyle.Render("unread-only") + " (i off)"
+	}
 	line := title + "\n" + statsStyle.Render(stats)
 	if sub := m.drillSubtitle(); sub != "" {
 		line += "\n" + accentStyle.Render("▶ ") + dimStyle.Render(sub)
@@ -343,7 +349,7 @@ func sortStrings(s []string) {
 }
 
 func (m *appModel) viewFooter() string {
-	return dimStyle.Render("→/← drill · ↑/↓ move · ⏎ detail · a/u/r/n act · k keep · s spam · d delete · A/U/R/N/K/S/D cohort · q quit · ? help")
+	return dimStyle.Render("→/← drill · ↑/↓ move · ⏎ detail · a/u/r/n act · k keep · s spam · d delete · A/U/R/N/K/S/D cohort · i unread-only · q quit · ? help")
 }
 
 func accountTag(a model.Account) string {
@@ -393,10 +399,40 @@ func lineCount(s string) int {
 	}
 	return strings.Count(s, "\n") + 1
 }
-
 func truncateRunewidth(s string, n int) string {
 	if runewidth.StringWidth(s) <= n {
 		return s
 	}
 	return runewidth.Truncate(s, n-1, "…")
+}
+
+// cell renders s styled by base. A focused row merges the selection background
+// so the highlight survives the full SGR reset every styled cell emits when
+// rendered (wrapping the assembled row in a background would let the first
+// cell's reset drop the highlight after the first column).
+func cell(s string, base lipgloss.Style, sel bool) string {
+	if sel {
+		base = base.Background(selBG)
+	}
+	return base.Render(s)
+}
+
+// finishRow prepends the cursor marker and pads a row to width. A focused row
+// highlights the whole row: the marker and trailing padding carry the selection
+// background, and each cell already had it merged via cell().
+func finishRow(content string, width int, sel bool) string {
+	var line string
+	if sel {
+		line = selStyle.Render("▸ ") + content
+	} else {
+		line = "  " + content
+	}
+	if pad := width - visWidth(line); pad > 0 {
+		if sel {
+			line += selStyle.Render(strings.Repeat(" ", pad))
+		} else {
+			line += strings.Repeat(" ", pad)
+		}
+	}
+	return line
 }

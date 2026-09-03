@@ -127,6 +127,9 @@ func (m *appModel) renderCandidateColumn(width, height int) string {
 		return ""
 	}
 	if len(m.candidates) == 0 {
+		if m.showUnread {
+			return dimStyle.Render("No unread threads needing a decision.")
+		}
 		return dimStyle.Render("All clear — nothing needs a decision.")
 	}
 	// Column header + rule, only when there's room.
@@ -173,8 +176,9 @@ func (m *appModel) candidateCompactRow(c *triage.Candidate, width int, sel bool)
 	subj := c.Thread.Subject
 
 	// Slots sum exactly to width: 2 (cursor frame) + badge + gaps + sender + subj
-	// (+ inbox + age + cohort at full width).
-	var line string
+	// (+ inbox + age + cohort at full width). Cells are styled via cell() so a
+	// focused row's highlight carries through every cell and gap.
+	var content string
 	switch {
 	case width >= 84:
 		badgeW, senderW, acctW, ageW, cohortW := 9, 22, 4, 7, 6
@@ -182,25 +186,29 @@ func (m *appModel) candidateCompactRow(c *triage.Candidate, width int, sel bool)
 		if subjW < 6 {
 			subjW = 6
 		}
-		badgeCell := actionColor[c.Pred.Action].Render(fit(badge, badgeW))
-		acctCell := accountStyle[c.Thread.Account].Render(fit(accountTag(c.Thread.Account), acctW))
-		ageCell := dimStyle.Render(fit(ageString(c.Thread.Date, m.now), ageW))
-		cohortCell := dimStyle.Render(fit(fmt.Sprintf("×%d", c.CohortCount()), cohortW))
-		line = "  " + badgeCell + "  " + fit(sender, senderW) + "  " + fit(subj, subjW) +
-			"  " + acctCell + "  " + ageCell + "  " + cohortCell
+		content = cell(fit(badge, badgeW), actionColor[c.Pred.Action], sel) +
+			cell("  ", noStyle, sel) +
+			cell(fit(sender, senderW), noStyle, sel) +
+			cell("  ", noStyle, sel) +
+			cell(fit(subj, subjW), noStyle, sel) +
+			cell("  ", noStyle, sel) +
+			cell(fit(accountTag(c.Thread.Account), acctW), accountStyle[c.Thread.Account], sel) +
+			cell("  ", noStyle, sel) +
+			cell(fit(ageString(c.Thread.Date, m.now), ageW), dimStyle, sel) +
+			cell("  ", noStyle, sel) +
+			cell(fit(fmt.Sprintf("×%d", c.CohortCount()), cohortW), dimStyle, sel)
 	case width >= 48:
-		badgeCell := actionColor[c.Pred.Action].Render(fit(badge, 8))
-		line = "  " + badgeCell + " " + fit(sender, 22) + " " + fit(subj, width-34)
+		content = cell(fit(badge, 8), actionColor[c.Pred.Action], sel) +
+			cell(" ", noStyle, sel) +
+			cell(fit(sender, 22), noStyle, sel) +
+			cell(" ", noStyle, sel) +
+			cell(fit(subj, width-34), noStyle, sel)
 	default:
-		line = "  " + fit(sender, width-13) + " " + fit(subj, 10)
+		content = cell(fit(sender, width-13), noStyle, sel) +
+			cell(" ", noStyle, sel) +
+			cell(fit(subj, 10), noStyle, sel)
 	}
-	if sel {
-		line = "▸" + line[1:]
-		line = selStyle.Render(line)
-	} else {
-		line = " " + line[1:]
-	}
-	return fitAnsi(line, width)
+	return finishRow(content, width, sel)
 }
 
 // renderThreadColumn renders the selected candidate's cohort threads.
@@ -243,30 +251,29 @@ func (m *appModel) threadCompactRow(t *model.Thread, width int, sel bool) string
 	if sender == "" {
 		sender = t.FromName
 	}
-	var line string
+	var content string
 	if width >= 60 {
 		meta := fmt.Sprintf("%s · %d msg", ageString(t.Date, m.now), t.MessageCount)
 		metaW := visWidth(meta)
-		metaCell := dimStyle.Render(fit(meta, metaW))
 		subjW := width - 28 - metaW
 		if subjW < 4 {
 			subjW = 4
 		}
-		line = "  " + fit(sender, 24) + " " + fit(t.Subject, subjW) + " " + metaCell
+		content = cell(fit(sender, 24), noStyle, sel) +
+			cell(" ", noStyle, sel) +
+			cell(fit(t.Subject, subjW), noStyle, sel) +
+			cell(" ", noStyle, sel) +
+			cell(fit(meta, metaW), dimStyle, sel)
 	} else {
 		subjW := width - 19
 		if subjW < 3 {
 			subjW = 3
 		}
-		line = "  " + fit(sender, 16) + " " + fit(t.Subject, subjW)
+		content = cell(fit(sender, 16), noStyle, sel) +
+			cell(" ", noStyle, sel) +
+			cell(fit(t.Subject, subjW), noStyle, sel)
 	}
-	if sel {
-		line = "▸" + line[1:]
-		line = selStyle.Render(line)
-	} else {
-		line = " " + line[1:]
-	}
-	return fitAnsi(line, width)
+	return finishRow(content, width, sel)
 }
 
 // renderMessageColumn renders the selected thread's messages + plaintext contents.

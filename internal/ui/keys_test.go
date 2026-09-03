@@ -18,13 +18,15 @@ func keyTestCandidate() *triage.Candidate {
 }
 
 func keyTestApp() *appModel {
+	c := keyTestCandidate()
 	return &appModel{
-		loaded:     true,
-		candidates: []*triage.Candidate{keyTestCandidate()},
-		now:        time.Now(),
-		width:      100,
-		height:     40,
-		progress:   map[string]triage.Progress{},
+		loaded:        true,
+		candidates:    []*triage.Candidate{c},
+		allCandidates: []*triage.Candidate{c},
+		now:           time.Now(),
+		width:         100,
+		height:        40,
+		progress:      map[string]triage.Progress{},
 	}
 }
 
@@ -76,6 +78,12 @@ func TestBulkArchiveRemovesCohortOptimistically(t *testing.T) {
 			mk("3", "other@esp.com", model.CategoryPromotion),        // different sender → stays
 			mk("4", "no-reply@esp.com", model.CategoryTransactional), // same sender, diff category → also removed
 		},
+		allCandidates: []*triage.Candidate{
+			mk("1", "no-reply@esp.com", model.CategoryPromotion),
+			mk("2", "no-reply@esp.com", model.CategoryPromotion),
+			mk("3", "other@esp.com", model.CategoryPromotion),
+			mk("4", "no-reply@esp.com", model.CategoryTransactional),
+		},
 		progress: map[string]triage.Progress{},
 	}
 
@@ -89,5 +97,43 @@ func TestBulkArchiveRemovesCohortOptimistically(t *testing.T) {
 		if c.Thread.FromEmail == "no-reply@esp.com" {
 			t.Fatalf("sender cohort row not removed: %s/%s", c.Thread.ID, c.Pred.Category)
 		}
+	}
+}
+func TestUnreadToggleFiltersCandidates(t *testing.T) {
+	now := time.Now()
+	mk := func(id, email string, unread int) *triage.Candidate {
+		return &triage.Candidate{
+			Thread: &model.Thread{ID: id, Account: model.AccountGmail, FromEmail: email, Unread: unread, Date: now},
+			Pred:   model.Prediction{Category: model.CategoryPromotion, Action: model.ActionArchive, Confidence: 0.9},
+		}
+	}
+	m := &appModel{
+		loaded:        true,
+		now:           now,
+		width:         100,
+		height:        40,
+		allCandidates: []*triage.Candidate{mk("1", "a@x.com", 2), mk("2", "b@x.com", 0), mk("3", "c@x.com", 1)},
+		progress:      map[string]triage.Progress{},
+	}
+	m.refreshCandidates()
+	if len(m.candidates) != 3 {
+		t.Fatalf("unfiltered: expected 3 candidates, got %d", len(m.candidates))
+	}
+
+	// Toggle on (i): only threads with unread messages remain.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if len(m.candidates) != 2 {
+		t.Fatalf("unread-only: expected 2 candidates, got %d", len(m.candidates))
+	}
+	for _, c := range m.candidates {
+		if c.Thread.Unread == 0 {
+			t.Fatalf("read thread %s still shown in unread-only mode", c.Thread.ID)
+		}
+	}
+
+	// Toggle off: the full list is restored.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if len(m.candidates) != 3 {
+		t.Fatalf("toggled back: expected 3 candidates, got %d", len(m.candidates))
 	}
 }

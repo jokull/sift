@@ -21,7 +21,15 @@ type appModel struct {
 	loaded     bool
 	loadingMsg string
 
+	// candidates is the currently displayed decision list — a view onto
+	// allCandidates filtered by showUnread. The list is what rendering,
+	// navigation and decisions operate on.
 	candidates []*triage.Candidate
+	// allCandidates is the full working decision list (source of truth); a
+	// decision removes threads here, and candidates is rebuilt from it.
+	allCandidates []*triage.Candidate
+	// showUnread filters candidates down to threads with unread messages.
+	showUnread bool
 	autoJobs   []triage.AutoJob
 	stats      triage.Stats
 	warnings   []string
@@ -111,7 +119,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.idleCmd()
 	case loadedMsg:
 		m.loaded = true
-		m.candidates = msg.plan.Candidates
+		m.allCandidates = msg.plan.Candidates
 		m.autoJobs = msg.plan.Auto
 		m.stats = msg.plan.Stats
 		m.warnings = msg.plan.Warnings
@@ -122,6 +130,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messagesLoading = false
 		m.messagesErr = ""
 		m.msgScroll = 0
+		m.refreshCandidates()
 		m.submitAutoJobs()
 		return m, m.waitProgress()
 	case errMsg:
@@ -264,20 +273,14 @@ func (m *appModel) applyDecision(idx int, action model.Action, wholeCohort bool)
 	for _, c := range handled {
 		handledIDs[c.Thread.ID] = true
 	}
-	kept := m.candidates[:0]
-	for _, c := range m.candidates {
+	kept := m.allCandidates[:0]
+	for _, c := range m.allCandidates {
 		if !handledIDs[c.Thread.ID] {
 			kept = append(kept, c)
 		}
 	}
-	m.candidates = kept
-
-	if m.cursor >= len(m.candidates) {
-		m.cursor = len(m.candidates) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
+	m.allCandidates = kept
+	m.refreshCandidates()
 	m.detail = nil
 }
 
@@ -299,4 +302,33 @@ func actionName(a model.Action) string {
 		return "delete"
 	}
 	return string(a)
+}
+
+// refreshCandidates rebuilds the displayed candidate list from the full working
+// set, applying the unread-only filter, and clamps the cursor.
+func (m *appModel) refreshCandidates() {
+	if m.showUnread {
+		var filtered []*triage.Candidate
+		for _, c := range m.allCandidates {
+			if c.Thread.Unread > 0 {
+				filtered = append(filtered, c)
+			}
+		}
+		m.candidates = filtered
+	} else {
+		m.candidates = m.allCandidates
+	}
+	if m.cursor >= len(m.candidates) {
+		m.cursor = len(m.candidates) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+}
+
+// toggleUnread flips the unread-only filter and restarts the list at the top.
+func (m *appModel) toggleUnread() {
+	m.showUnread = !m.showUnread
+	m.cursor = 0
+	m.refreshCandidates()
 }

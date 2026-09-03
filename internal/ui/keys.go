@@ -67,6 +67,8 @@ func (m *appModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyDecision(m.cursor, model.ActionSpam, true)
 	case "D":
 		m.applyDecision(m.cursor, model.ActionDelete, true)
+	case "i":
+		m.toggleUnread()
 	}
 	return m, m.waitProgress()
 }
