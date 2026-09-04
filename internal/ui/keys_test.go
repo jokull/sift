@@ -157,6 +157,7 @@ func TestDeepCohortCountUpdatesLabel(t *testing.T) {
 		deepCohortTrunc:   map[cohortKey]bool{},
 		deepCohortPending: map[cohortKey]bool{},
 		deepCohortSem:     make(chan struct{}, 3),
+		deepCohortThreads: map[cohortKey][]*model.Thread{},
 	}
 	if got := m.cohortLabel(c); got != "×2" {
 		t.Fatalf("loaded-window label: expected ×2, got %s", got)

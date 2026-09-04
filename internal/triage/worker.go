@@ -3,11 +3,17 @@ package triage
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/jokull/sift/internal/accounts"
 	"github.com/jokull/sift/internal/model"
 	"github.com/jokull/sift/internal/unsub"
 )
+
+// applyPace is the delay between thread mutations within a job, so a large
+// cohort (e.g. a server-true deep archive of a high-volume sender) doesn't burst
+// past the mailbox provider's per-second API limit and spuriously fail.
+const applyPace = 150 * time.Millisecond
 
 // Job is a unit of async work: move a set of threads (single account) per an
 // action, with a human-facing label for the HUD.
@@ -135,7 +141,7 @@ func (w *Worker) run(job *Job) {
 	done, failed := 0, 0
 	var detail string
 	w.emit(Progress{Label: job.Label, Account: job.Account, Total: len(job.Threads), Active: true})
-	for _, th := range job.Threads {
+	for i, th := range job.Threads {
 		if w.dryRun {
 			done++
 			w.emit(Progress{Label: job.Label, Account: job.Account, Total: len(job.Threads), Done: done, Failed: failed, Active: true})
@@ -156,6 +162,15 @@ func (w *Worker) run(job *Job) {
 		} else {
 			done++
 			w.emit(Progress{Label: job.Label, Account: job.Account, Total: len(job.Threads), Done: done, Failed: failed, Active: true})
+		}
+		// Pace between mutations so a large server-true cohort archive doesn't
+		// trip the provider's per-second limit.
+		if i < len(job.Threads)-1 {
+			select {
+			case <-time.After(applyPace):
+			case <-w.ctx.Done():
+				return
+			}
 		}
 	}
 	w.emit(Progress{Label: job.Label, Account: job.Account, Total: len(job.Threads), Done: done, Failed: failed, Active: false, Detail: detail})

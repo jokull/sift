@@ -41,7 +41,8 @@ type appModel struct {
 	deepCohorts       map[cohortKey]int
 	deepCohortTrunc   map[cohortKey]bool
 	deepCohortPending map[cohortKey]bool
-	deepCohortSem     chan struct{} // bounds concurrent fetches (3)
+	deepCohortSem     chan struct{}                 // bounds concurrent fetches (3)
+	deepCohortThreads map[cohortKey][]*model.Thread // server-true triage threads per sender
 
 	cursor int
 
@@ -83,6 +84,7 @@ type messagesMsg struct {
 // cohortCountMsg carries an async server-true cohort count for one sender.
 type cohortCountMsg struct {
 	key       cohortKey
+	threads   []*model.Thread
 	count     int
 	truncated bool
 	err       error
@@ -106,6 +108,7 @@ func New(engine *triage.Engine, worker *triage.Worker, store *state.Store, ctx c
 		deepCohortTrunc:   map[cohortKey]bool{},
 		deepCohortPending: map[cohortKey]bool{},
 		deepCohortSem:     make(chan struct{}, deepCohortConcurrency),
+		deepCohortThreads: map[cohortKey][]*model.Thread{},
 		now:               time.Now(),
 	}
 }
@@ -154,9 +157,8 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.level = levelList
 		m.threads = nil
 		m.messages = nil
-		m.messagesLoading = false
-		m.messagesErr = ""
-		m.msgScroll = 0
+		m.refreshCandidates()
+		m.submitAutoJobs()
 		return m, tea.Batch(m.waitProgress(), m.fetchDeepCohorts())
 	case errMsg:
 		m.loadingMsg = ""
@@ -180,6 +182,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.deepCohorts[msg.key] = msg.count
 			m.deepCohortTrunc[msg.key] = msg.truncated
+			m.deepCohortThreads[msg.key] = msg.threads
 		}
 		return m, m.waitProgress()
 	case tea.MouseMsg:
@@ -279,13 +282,28 @@ func (m *appModel) applyDecision(idx int, action model.Action, wholeCohort bool)
 		handled = []*triage.Candidate{can}
 	}
 
-	// Submit work per account (a cohort can span both mailboxes).
+	// Submit work per account (a cohort can span both mailboxes). For a
+	// whole-cohort action we swap in the cached server-true triage threads (the
+	// set the ×N badge counts) so the action affects the whole sender, not just
+	// what's in view; if the deep fetch hasn't landed yet, fall back to the
+	// loaded candidates.
 	if action != model.ActionKeep {
 		byAccount := map[model.Account][]*model.Thread{}
 		for _, c := range handled {
 			byAccount[c.Thread.Account] = append(byAccount[c.Thread.Account], c.Thread)
 		}
+		if wholeCohort {
+			group := can.Thread.SenderKey()
+			for acct := range byAccount {
+				if deep, ok := m.deepCohortThreads[cohortKey{account: acct, sender: group}]; ok {
+					byAccount[acct] = deep
+				}
+			}
+		}
 		for acct, ts := range byAccount {
+			if len(ts) == 0 {
+				continue
+			}
 			if m.worker != nil {
 				m.worker.Submit(&triage.Job{
 					Account: acct,
@@ -409,7 +427,7 @@ func (m *appModel) fetchOneDeepCohort(k cohortKey) tea.Cmd {
 		if m.engine == nil {
 			return cohortCountMsg{key: k, err: fmt.Errorf("no engine")}
 		}
-		count, truncated, err := m.engine.CohortDeepCount(m.ctx, k.account, k.sender)
-		return cohortCountMsg{key: k, count: count, truncated: truncated, err: err}
+		threads, truncated, err := m.engine.CohortThreads(m.ctx, k.account, k.sender)
+		return cohortCountMsg{key: k, threads: threads, count: len(threads), truncated: truncated, err: err}
 	}
 }

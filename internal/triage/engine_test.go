@@ -84,10 +84,10 @@ func TestLoadEmitsBootProgress(t *testing.T) {
 	}
 }
 
-// TestCohortDeepCount guards the server-true cohort count: it fetches the
-// sender's full inbox thread set (beyond the loaded window) and counts only
+// TestCohortThreads guards the server-true cohort count: it fetches the
+// sender's full inbox thread set (beyond the loaded window) and returns only
 // triage-category threads, using cached classifications.
-func TestCohortDeepCount(t *testing.T) {
+func TestCohortThreads(t *testing.T) {
 	ctx := context.Background()
 	sender := "no-reply@esp.com"
 	threads := []*model.Thread{
@@ -113,12 +113,17 @@ func TestCohortDeepCount(t *testing.T) {
 	}
 
 	e := New(map[model.Account]accounts.Source{model.AccountFastmail: src}, nil, st)
-	n, truncated, err := e.CohortDeepCount(ctx, model.AccountFastmail, sender)
+	got, truncated, err := e.CohortThreads(ctx, model.AccountFastmail, sender)
 	if err != nil {
-		t.Fatalf("CohortDeepCount: %v", err)
+		t.Fatalf("CohortThreads: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("expected 1 triage thread in deep cohort, got %d", n)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 triage thread in deep cohort, got %d", len(got))
+	}
+	for _, th := range got {
+		if th.ID != "1" {
+			t.Fatalf("expected thread 1 (promotion), got %s", th.ID)
+		}
 	}
 	if truncated {
 		t.Fatalf("unexpected truncation with 4 threads")
