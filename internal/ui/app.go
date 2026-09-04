@@ -162,7 +162,6 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.waitProgress(), m.fetchDeepCohorts())
 	case errMsg:
 		m.loadingMsg = ""
-		// Surface the error in the main view instead of spinning forever.
 		m.loaded = true
 		m.warnings = []string{"ERROR: " + msg.err.Error()}
 		return m, m.waitProgress()
@@ -177,6 +176,8 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.frame++
 		m.loadingMsg = msg.text
 		return m, m.bootLoop()
+	case messagesMsg:
+		return m, m.onMessages(msg)
 	case cohortCountMsg:
 		delete(m.deepCohortPending, msg.key)
 		if msg.err == nil {
