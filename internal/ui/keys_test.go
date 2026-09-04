@@ -172,3 +172,36 @@ func TestDeepCohortCountUpdatesLabel(t *testing.T) {
 		t.Fatalf("when truncated: expected ×25+, got %s", got)
 	}
 }
+
+// TestDrillIntoUsesDeepCohort guards the threads drilldown: drilling into a row
+// shows the server-true cohort once the deep fetch has landed, not just the
+// loaded-window cohort.
+func TestDrillIntoUsesDeepCohort(t *testing.T) {
+	now := time.Now()
+	sender := "no-reply@esp.com"
+	loaded := []*model.Thread{
+		{ID: "a", Account: model.AccountFastmail, FromEmail: sender, Date: now},
+	}
+	c := &triage.Candidate{
+		Thread: &model.Thread{ID: "a", Account: model.AccountFastmail, FromEmail: sender, Date: now},
+		Pred:   model.Prediction{Category: model.CategoryPromotion, Action: model.ActionArchive, Confidence: 0.9},
+		Cohort: loaded,
+	}
+	k := cohortKey{account: model.AccountFastmail, sender: sender}
+	m := &appModel{
+		level:      levelList,
+		cursor:     0,
+		candidates: []*triage.Candidate{c},
+		deepCohortThreads: map[cohortKey][]*model.Thread{
+			k: {
+				{ID: "a", Account: model.AccountFastmail, FromEmail: sender, Date: now},
+				{ID: "b", Account: model.AccountFastmail, FromEmail: sender, Date: now},
+				{ID: "c", Account: model.AccountFastmail, FromEmail: sender, Date: now},
+			},
+		},
+	}
+	m.enterLevel1()
+	if len(m.threads) != 3 {
+		t.Fatalf("expected the server-true cohort (3 threads) after drilling in, got %d", len(m.threads))
+	}
+}

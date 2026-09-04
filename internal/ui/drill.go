@@ -453,7 +453,10 @@ func (m *appModel) enterLevel1() {
 		return
 	}
 	can := m.candidates[m.cursor]
-	m.threads = can.Cohort
+	// Prefer the server-true cohort (the same threads the ×N badge counts) once
+	// the deep fetch has landed, so drilling in shows the sender's whole inbox
+	// thread set; fall back to the loaded cohort if it hasn't.
+	m.threads = m.deepCohortFor(can)
 	if len(m.threads) == 0 {
 		m.threads = []*model.Thread{can.Thread}
 	}
@@ -464,6 +467,16 @@ func (m *appModel) enterLevel1() {
 	m.level = levelThreads
 	m.messages = nil
 	m.messagesErr = ""
+}
+
+// deepCohortFor returns the cached server-true triage threads for a candidate's
+// account+sender, or the loaded-window cohort when the deep fetch hasn't landed.
+func (m *appModel) deepCohortFor(c *triage.Candidate) []*model.Thread {
+	k := cohortKey{account: c.Thread.Account, sender: c.Thread.SenderKey()}
+	if ts, ok := m.deepCohortThreads[k]; ok {
+		return ts
+	}
+	return c.Cohort
 }
 
 // enterLevel2 drills into the selected thread's messages (fetched async).
