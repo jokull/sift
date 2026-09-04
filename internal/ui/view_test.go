@@ -20,7 +20,7 @@ func TestRenderListAndDetail(t *testing.T) {
 			{Thread: &model.Thread{ID: "2", Account: model.AccountFastmail, Subject: "New letter from friend", FromEmail: "friend@y.com", Date: now.Add(-5 * time.Hour)}, Pred: model.Prediction{Category: model.CategoryKeep, Action: model.ActionKeep, Confidence: 0.8}},
 		},
 		progress: map[string]triage.Progress{
-			"gmail → archive": {Label: "gmail → archive", Account: model.AccountGmail, Total: 5, Done: 2, Active: true},
+			"gmail → archive":     {Label: "gmail → archive", Account: model.AccountGmail, Total: 5, Done: 2, Active: true},
 			"fastmail → receipts": {Label: "fastmail → receipts", Account: model.AccountFastmail, Total: 15, Done: 15},
 		},
 	}

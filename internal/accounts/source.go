@@ -24,6 +24,11 @@ type Source interface {
 	// ListThreads returns conversations sitting in the inbox, newest first,
 	// with metadata sufficient to classify and act on them.
 	ListThreads(ctx context.Context, limit int) ([]*model.Thread, error)
+	// ListThreadsBySender returns the sender's threads that live in the inbox,
+	// newest first, by querying the server for all matches (not just the loaded
+	// window). limit caps the total returned; truncated is true when more matches
+	// likely remain beyond limit. This backs the server-true deep cohort count.
+	ListThreadsBySender(ctx context.Context, sender string, limit int) (threads []*model.Thread, truncated bool, err error)
 	// Apply moves the given threads according to action. Threads are handled as
 	// whole conversations (every message in the thread).
 	Apply(ctx context.Context, threads []*model.Thread, action model.Action) error

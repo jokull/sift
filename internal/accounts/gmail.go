@@ -200,6 +200,62 @@ func (g *gmailSource) ListThreads(ctx context.Context, limit int) ([]*model.Thre
 	return threads, nil
 }
 
+// ListThreadsBySender returns the sender's threads in the inbox, newest first,
+// by asking gog to fetch all matching pages (--all), so the deep cohort count
+// reflects the true mailbox rather than just the loaded window.
+func (g *gmailSource) ListThreadsBySender(ctx context.Context, sender string, limit int) ([]*model.Thread, bool, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if strings.TrimSpace(sender) == "" {
+		return nil, false, nil
+	}
+	out, err := g.gog(ctx,
+		"gmail", "search", "in:inbox from:"+sender,
+		"-a", g.cfg.Account,
+		"--all", "--results-only", "-j", "--no-input",
+	)
+	if err != nil {
+		return nil, false, gogHint("gmail search", err, out)
+	}
+	var rows []gmailThread
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		return nil, false, fmt.Errorf("parse gog search output: %w\n%s", err, truncate(out, 400))
+	}
+
+	threads := make([]*model.Thread, 0, len(rows))
+	for _, r := range rows {
+		name, email := splitFrom(r.From)
+		if strings.ToLower(email) != strings.ToLower(sender) {
+			continue
+		}
+		t := &model.Thread{
+			ID:           r.ID,
+			Account:      model.AccountGmail,
+			Subject:      r.Subject,
+			FromName:     name,
+			FromEmail:    strings.ToLower(email),
+			Date:         parseInternalDate(r.InternalDateIso),
+			MessageCount: r.MessageCount,
+			Labels:       r.Labels,
+		}
+		if t.Date.IsZero() {
+			if d, err := time.ParseInLocation("2006-01-02 15:04", r.Date, time.Local); err == nil {
+				t.Date = d.UTC()
+			}
+		}
+		t.Unread = countLabel(r.Labels, "UNREAD")
+		threads = append(threads, t)
+	}
+	sortThreadsNewest(threads)
+	truncated := false
+	if len(threads) > limit {
+		threads = threads[:limit]
+		truncated = true
+	}
+	return threads, truncated, nil
+}
+
 // gmailHeader is a single message header.
 type gmailHeader struct {
 	Name  string `json:"name"`
@@ -208,11 +264,11 @@ type gmailHeader struct {
 
 // gmailMsgPayload recurses through a Gmail message's MIME payload.
 type gmailMsgPayload struct {
-	MimeType string          `json:"mimeType"`
+	MimeType string `json:"mimeType"`
 	Body     struct {
 		Data string `json:"data"`
 	} `json:"body"`
-	Headers []gmailHeader  `json:"headers"`
+	Headers []gmailHeader     `json:"headers"`
 	Parts   []gmailMsgPayload `json:"parts"`
 }
 

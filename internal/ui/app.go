@@ -34,6 +34,15 @@ type appModel struct {
 	stats      triage.Stats
 	warnings   []string
 
+	// Deep cohort counts, keyed "account|senderKey", fetched asynchronously from
+	// the server so ×N reflects the true mailbox (not just the loaded window).
+	// deepCohortTrunc marks senders whose volume exceeded the fetch cap; the
+	// count is then approximate. deepCohortPending dedupes in-flight fetches.
+	deepCohorts       map[cohortKey]int
+	deepCohortTrunc   map[cohortKey]bool
+	deepCohortPending map[cohortKey]bool
+	deepCohortSem     chan struct{} // bounds concurrent fetches (3)
+
 	cursor int
 
 	// Drilldown navigation: candidates ▸ threads ▸ messages.
@@ -71,15 +80,33 @@ type messagesMsg struct {
 	err      error
 }
 
+// cohortCountMsg carries an async server-true cohort count for one sender.
+type cohortCountMsg struct {
+	key       cohortKey
+	count     int
+	truncated bool
+	err       error
+}
+
+// cohortKey identifies a sender within an account for the deep cohort count.
+type cohortKey struct {
+	account model.Account
+	sender  string
+}
+
 // New builds the TUI state and binds the cancellation context.
 func New(engine *triage.Engine, worker *triage.Worker, store *state.Store, ctx context.Context) *appModel {
 	return &appModel{
-		engine:   engine,
-		worker:   worker,
-		store:    store,
-		ctx:      ctx,
-		progress: map[string]triage.Progress{},
-		now:      time.Now(),
+		engine:            engine,
+		worker:            worker,
+		store:             store,
+		ctx:               ctx,
+		progress:          map[string]triage.Progress{},
+		deepCohorts:       map[cohortKey]int{},
+		deepCohortTrunc:   map[cohortKey]bool{},
+		deepCohortPending: map[cohortKey]bool{},
+		deepCohortSem:     make(chan struct{}, deepCohortConcurrency),
+		now:               time.Now(),
 	}
 }
 
@@ -130,9 +157,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messagesLoading = false
 		m.messagesErr = ""
 		m.msgScroll = 0
-		m.refreshCandidates()
-		m.submitAutoJobs()
-		return m, m.waitProgress()
+		return m, tea.Batch(m.waitProgress(), m.fetchDeepCohorts())
 	case errMsg:
 		m.loadingMsg = ""
 		// Surface the error in the main view instead of spinning forever.
@@ -150,8 +175,13 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.frame++
 		m.loadingMsg = msg.text
 		return m, m.bootLoop()
-	case messagesMsg:
-		return m, m.onMessages(msg)
+	case cohortCountMsg:
+		delete(m.deepCohortPending, msg.key)
+		if msg.err == nil {
+			m.deepCohorts[msg.key] = msg.count
+			m.deepCohortTrunc[msg.key] = msg.truncated
+		}
+		return m, m.waitProgress()
 	case tea.MouseMsg:
 		return m.updateMouse(msg)
 	case tickMsg:
@@ -331,4 +361,55 @@ func (m *appModel) toggleUnread() {
 	m.showUnread = !m.showUnread
 	m.cursor = 0
 	m.refreshCandidates()
+}
+
+// deepCohortKeys returns the unique (account, sender) pairs among the working
+// candidates that haven't been fetched or are already in flight.
+func (m *appModel) deepCohortKeys() []cohortKey {
+	seen := map[cohortKey]bool{}
+	var keys []cohortKey
+	for _, c := range m.allCandidates {
+		k := cohortKey{account: c.Thread.Account, sender: c.Thread.SenderKey()}
+		if seen[k] || m.deepCohortPending[k] {
+			continue
+		}
+		if _, done := m.deepCohorts[k]; done {
+			continue
+		}
+		seen[k] = true
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// deepCohortConcurrency bounds how many server-true cohort queries run at once.
+const deepCohortConcurrency = 3
+
+// fetchDeepCohorts launches an async server-true cohort count for each unseen
+// sender in the list, bounded to deepCohortConcurrency concurrent queries.
+func (m *appModel) fetchDeepCohorts() tea.Cmd {
+	keys := m.deepCohortKeys()
+	if len(keys) == 0 {
+		return nil
+	}
+	cmds := make([]tea.Cmd, 0, len(keys))
+	for _, k := range keys {
+		m.deepCohortPending[k] = true
+		cmds = append(cmds, m.fetchOneDeepCohort(k))
+	}
+	return tea.Batch(cmds...)
+}
+
+// fetchOneDeepCohort queries the server for one sender's true triage cohort
+// count, bounded to deepCohortConcurrency in-flight fetches via the semaphore.
+func (m *appModel) fetchOneDeepCohort(k cohortKey) tea.Cmd {
+	return func() tea.Msg {
+		m.deepCohortSem <- struct{}{}
+		defer func() { <-m.deepCohortSem }()
+		if m.engine == nil {
+			return cohortCountMsg{key: k, err: fmt.Errorf("no engine")}
+		}
+		count, truncated, err := m.engine.CohortDeepCount(m.ctx, k.account, k.sender)
+		return cohortCountMsg{key: k, count: count, truncated: truncated, err: err}
+	}
 }

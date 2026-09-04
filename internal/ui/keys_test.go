@@ -137,3 +137,37 @@ func TestUnreadToggleFiltersCandidates(t *testing.T) {
 		t.Fatalf("toggled back: expected 3 candidates, got %d", len(m.candidates))
 	}
 }
+
+// TestDeepCohortCountUpdatesLabel guards the ×N badge: the loaded-window count
+// is shown until the server-true deep count arrives via cohortCountMsg, which
+// then overrides it (with "+" when the fetch was capped).
+func TestDeepCohortCountUpdatesLabel(t *testing.T) {
+	now := time.Now()
+	sender := "no-reply@esp.com"
+	c := &triage.Candidate{
+		Thread: &model.Thread{ID: "1", Account: model.AccountFastmail, FromEmail: sender, Date: now},
+		Pred:   model.Prediction{Category: model.CategoryPromotion, Action: model.ActionArchive, Confidence: 0.9},
+		Cohort: []*model.Thread{
+			{ID: "a", Account: model.AccountFastmail, FromEmail: sender, Date: now},
+			{ID: "b", Account: model.AccountFastmail, FromEmail: sender, Date: now},
+		},
+	}
+	m := &appModel{
+		deepCohorts:       map[cohortKey]int{},
+		deepCohortTrunc:   map[cohortKey]bool{},
+		deepCohortPending: map[cohortKey]bool{},
+		deepCohortSem:     make(chan struct{}, 3),
+	}
+	if got := m.cohortLabel(c); got != "×2" {
+		t.Fatalf("loaded-window label: expected ×2, got %s", got)
+	}
+	k := cohortKey{account: c.Thread.Account, sender: c.Thread.SenderKey()}
+	m.Update(cohortCountMsg{key: k, count: 25})
+	if got := m.cohortLabel(c); got != "×25" {
+		t.Fatalf("after deep count: expected ×25, got %s", got)
+	}
+	m.Update(cohortCountMsg{key: k, count: 25, truncated: true})
+	if got := m.cohortLabel(c); got != "×25+" {
+		t.Fatalf("when truncated: expected ×25+, got %s", got)
+	}
+}

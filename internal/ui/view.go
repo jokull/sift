@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 	"github.com/jokull/sift/internal/model"
 	"github.com/jokull/sift/internal/triage"
+	"github.com/mattn/go-runewidth"
 )
 
 var (

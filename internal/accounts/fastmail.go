@@ -14,8 +14,8 @@ import (
 )
 
 type fastmailSource struct {
-	cfg  *config.FastmailConfig
-	cli  *jmap.Client
+	cfg   *config.FastmailConfig
+	cli   *jmap.Client
 	token string
 }
 
@@ -39,10 +39,10 @@ type respEnvelope struct {
 
 // emailRow is the subset of JMAP Email properties we request.
 type emailRow struct {
-	ID         string `json:"id"`
-	ThreadID   string `json:"threadId"`
-	Subject    string `json:"subject"`
-	From       []struct {
+	ID       string `json:"id"`
+	ThreadID string `json:"threadId"`
+	Subject  string `json:"subject"`
+	From     []struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
 	} `json:"from"`
@@ -76,8 +76,8 @@ func (s *fastmailSource) ListThreads(ctx context.Context, limit int) ([]*model.T
 	}
 
 	g := jmap.NewCall("Email/get", map[string]any{
-		"accountId": s.cfg.AccountID,
-		"ids":       ids,
+		"accountId":  s.cfg.AccountID,
+		"ids":        ids,
 		"properties": []string{"subject", "from", "receivedAt", "threadId", "mailboxIds", "preview", "keywords"},
 	}, "g0")
 	if err := s.cli.Call(&env, g); err != nil {
@@ -107,11 +107,11 @@ func (s *fastmailSource) ListThreads(ctx context.Context, limit int) ([]*model.T
 		t, ok := byThread[r.ThreadID]
 		if !ok {
 			t = &model.Thread{
-				ID:           r.ThreadID,
-				Account:      model.AccountFastmail,
-				Subject:      r.Subject,
-				Date:         parseRFC3339(r.ReceivedAt),
-				Snippet:      r.Preview,
+				ID:      r.ThreadID,
+				Account: model.AccountFastmail,
+				Subject: r.Subject,
+				Date:    parseRFC3339(r.ReceivedAt),
+				Snippet: r.Preview,
 			}
 			if len(r.From) > 0 {
 				t.FromName = r.From[0].Name
@@ -146,6 +146,141 @@ func (s *fastmailSource) ListThreads(ctx context.Context, limit int) ([]*model.T
 	return threads, nil
 }
 
+// ListThreadsBySender returns the sender's threads in the inbox, newest first,
+// by paging the server for all matching emails (not just the loaded window), so
+// the deep cohort count reflects the true mailbox.
+func (s *fastmailSource) ListThreadsBySender(ctx context.Context, sender string, limit int) ([]*model.Thread, bool, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if strings.TrimSpace(sender) == "" {
+		return nil, false, nil
+	}
+	// Page the query for every email whose from matches sender (substring, a
+	// superset); the exact-sender filter below prevents over-counting.
+	pageSize := 100
+	maxEmails := limit * 3
+	var ids []string
+	for {
+		q := jmap.NewCall("Email/query", map[string]any{
+			"accountId": s.cfg.AccountID,
+			"filter":    map[string]any{"inMailbox": s.cfg.Folders.Inbox, "from": sender},
+			"sort":      []map[string]any{{"property": "receivedAt", "isAscending": false}},
+			"position":  len(ids),
+			"limit":     pageSize,
+		}, "q0")
+		var env respEnvelope
+		if err := s.cli.Call(&env, q); err != nil {
+			return nil, false, err
+		}
+		page, err := queryIDs(&env)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		ids = append(ids, page...)
+		if len(page) < pageSize {
+			break
+		}
+		if len(ids) >= maxEmails {
+			ids = ids[:maxEmails]
+			break
+		}
+	}
+
+	rows, err := s.fetchEmailRows(ctx, ids)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Group by JMAP threadId (newest message wins), keeping only exact sender
+	// matches so the substring filter can't inflate the count.
+	want := strings.ToLower(sender)
+	byThread := map[string]*model.Thread{}
+	for _, r := range rows {
+		email := ""
+		if len(r.From) > 0 {
+			email = strings.ToLower(r.From[0].Email)
+		}
+		if email != want {
+			continue
+		}
+		t, ok := byThread[r.ThreadID]
+		if !ok {
+			t = &model.Thread{ID: r.ThreadID, Account: model.AccountFastmail, FromEmail: email}
+			if len(r.From) > 0 {
+				t.FromName = r.From[0].Name
+			}
+			byThread[r.ThreadID] = t
+		}
+		t.MessageCount++
+		if !isSeen(r.Keywords) {
+			t.Unread++
+		}
+		if d := parseRFC3339(r.ReceivedAt); d.After(t.Date) || t.Date.IsZero() {
+			t.Date = d
+			t.Subject = r.Subject
+			t.Snippet = r.Preview
+			if len(r.From) > 0 {
+				t.FromName = r.From[0].Name
+			}
+		}
+	}
+
+	threads := make([]*model.Thread, 0, len(byThread))
+	for _, t := range byThread {
+		threads = append(threads, t)
+	}
+	sortThreadsNewest(threads)
+	truncated := false
+	if len(threads) > limit {
+		threads = threads[:limit]
+		truncated = true
+	}
+	return threads, truncated, nil
+}
+
+// fetchEmailRows fetches JMAP Email/get metadata for the given ids in chunks.
+func (s *fastmailSource) fetchEmailRows(ctx context.Context, ids []string) ([]emailRow, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []emailRow
+	const chunk = 200
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		g := jmap.NewCall("Email/get", map[string]any{
+			"accountId":  s.cfg.AccountID,
+			"ids":        ids[start:end],
+			"properties": []string{"subject", "from", "receivedAt", "threadId", "mailboxIds", "preview", "keywords"},
+		}, "g0")
+		var env respEnvelope
+		if err := s.cli.Call(&env, g); err != nil {
+			return nil, err
+		}
+		for _, resp := range env.MethodResponses {
+			var name string
+			_ = json.Unmarshal(resp[0], &name)
+			if name != "Email/get" {
+				continue
+			}
+			var args struct {
+				List []emailRow `json:"list"`
+			}
+			if err := json.Unmarshal(resp[1], &args); err != nil {
+				return nil, err
+			}
+			rows = append(rows, args.List...)
+		}
+	}
+	return rows, nil
+}
+
 // bodyPart and bodyValue mirror the JMAP Email body properties.
 type bodyPart struct {
 	PartID   string `json:"partId"`
@@ -158,10 +293,10 @@ type bodyValue struct {
 
 // emailGetRow is the JMAP Email properties requested for message bodies.
 type emailGetRow struct {
-	ID         string `json:"id"`
-	Subject    string `json:"subject"`
-	Preview    string `json:"preview"`
-	From       []struct {
+	ID      string `json:"id"`
+	Subject string `json:"subject"`
+	Preview string `json:"preview"`
+	From    []struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
 	} `json:"from"`
@@ -169,9 +304,9 @@ type emailGetRow struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
 	} `json:"to"`
-	ReceivedAt string      `json:"receivedAt"`
-	TextBody   []bodyPart  `json:"textBody"`
-	HtmlBody   []bodyPart  `json:"htmlBody"`
+	ReceivedAt string               `json:"receivedAt"`
+	TextBody   []bodyPart           `json:"textBody"`
+	HtmlBody   []bodyPart           `json:"htmlBody"`
 	BodyValues map[string]bodyValue `json:"bodyValues"`
 }
 
@@ -197,8 +332,8 @@ func (s *fastmailSource) ListMessages(ctx context.Context, thread *model.Thread)
 	}
 
 	g := jmap.NewCall("Email/get", map[string]any{
-		"accountId": s.cfg.AccountID,
-		"ids":       emailIDs,
+		"accountId":  s.cfg.AccountID,
+		"ids":        emailIDs,
 		"properties": []string{"subject", "from", "to", "receivedAt", "preview", "textBody", "htmlBody", "bodyValues"},
 	}, "g0")
 	var env2 respEnvelope
@@ -399,8 +534,8 @@ func (s *fastmailSource) UnsubscribeInfo(ctx context.Context, thread *model.Thre
 		return unsub.ParseHeader("", ""), nil
 	}
 	g := jmap.NewCall("Email/get", map[string]any{
-		"accountId": s.cfg.AccountID,
-		"ids":       []string{ids[0]},
+		"accountId":  s.cfg.AccountID,
+		"ids":        []string{ids[0]},
 		"properties": []string{"header:List-Unsubscribe", "header:List-Unsubscribe-Post"},
 	}, "g0")
 	var env respEnvelope
@@ -477,9 +612,11 @@ func queryIDs(env *respEnvelope) ([]string, error) {
 			continue
 		}
 		var args struct {
-			IDs        []string `json:"ids"`
-			List       []struct{ ID string `json:"id"` } `json:"list"`
-			NotFound   []string `json:"notFound"`
+			IDs  []string `json:"ids"`
+			List []struct {
+				ID string `json:"id"`
+			} `json:"list"`
+			NotFound []string `json:"notFound"`
 		}
 		if err := json.Unmarshal(resp[1], &args); err != nil {
 			return nil, err

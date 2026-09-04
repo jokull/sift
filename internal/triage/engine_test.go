@@ -2,11 +2,13 @@ package triage
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/jokull/sift/internal/accounts"
 	"github.com/jokull/sift/internal/model"
+	"github.com/jokull/sift/internal/state"
 )
 
 // fakeSource is a minimal in-memory Source for exercising the engine without
@@ -19,6 +21,18 @@ type fakeSource struct {
 func (f *fakeSource) Account() model.Account { return f.account }
 func (f *fakeSource) ListThreads(_ context.Context, _ int) ([]*model.Thread, error) {
 	return f.threads, nil
+}
+func (f *fakeSource) ListThreadsBySender(_ context.Context, sender string, limit int) ([]*model.Thread, bool, error) {
+	var out []*model.Thread
+	for _, t := range f.threads {
+		if t.SenderKey() == sender {
+			out = append(out, t)
+		}
+	}
+	if len(out) > limit {
+		return out[:limit], true, nil
+	}
+	return out, false, nil
 }
 func (f *fakeSource) Apply(context.Context, []*model.Thread, model.Action) error { return nil }
 func (f *fakeSource) EnsureFolders(context.Context) error                        { return nil }
@@ -67,5 +81,46 @@ func TestLoadEmitsBootProgress(t *testing.T) {
 		}
 	default:
 		t.Fatalf("expected a boot progress message")
+	}
+}
+
+// TestCohortDeepCount guards the server-true cohort count: it fetches the
+// sender's full inbox thread set (beyond the loaded window) and counts only
+// triage-category threads, using cached classifications.
+func TestCohortDeepCount(t *testing.T) {
+	ctx := context.Background()
+	sender := "no-reply@esp.com"
+	threads := []*model.Thread{
+		{ID: "1", Account: model.AccountFastmail, FromEmail: sender, Subject: "a promo"},
+		{ID: "2", Account: model.AccountFastmail, FromEmail: sender, Subject: "an invoice"},
+		{ID: "3", Account: model.AccountFastmail, FromEmail: sender, Subject: "a newsletter"},
+		{ID: "4", Account: model.AccountFastmail, FromEmail: sender, Subject: "a friend"},
+	}
+	src := &fakeSource{account: model.AccountFastmail, threads: threads}
+
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	for _, id := range []string{"1", "2", "3", "4"} {
+		if err := st.SaveClassification(string(model.AccountFastmail), id, model.Prediction{
+			Category: map[string]model.Category{"1": model.CategoryPromotion, "2": model.CategoryReceipt, "3": model.CategoryNewsletter, "4": model.CategoryKeep}[id],
+			Action:   model.ActionArchive,
+		}); err != nil {
+			t.Fatalf("save classification: %v", err)
+		}
+	}
+
+	e := New(map[model.Account]accounts.Source{model.AccountFastmail: src}, nil, st)
+	n, truncated, err := e.CohortDeepCount(ctx, model.AccountFastmail, sender)
+	if err != nil {
+		t.Fatalf("CohortDeepCount: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 triage thread in deep cohort, got %d", n)
+	}
+	if truncated {
+		t.Fatalf("unexpected truncation with 4 threads")
 	}
 }

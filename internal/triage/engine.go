@@ -119,6 +119,38 @@ func (e *Engine) Messages(ctx context.Context, thread *model.Thread) ([]*model.M
 	return src.ListMessages(ctx, thread)
 }
 
+// deepCohortLimit is the safety cap on how many of a sender's inbox threads the
+// deep cohort count fetch + classify per sender, so pathological volume can't
+// balloon the request/AI budget.
+const deepCohortLimit = 2000
+
+// CohortDeepCount returns the true number of the sender's inbox threads that
+// need a decision (a triage category: promotion/transactional/actionable/
+// unknown), by fetching the sender's full inbox thread set from the server and
+// classifying the parts not already known (cache-backed). truncated reports
+// when the sender's thread volume exceeded deepCohortLimit, so the caller can
+// render an approximate count. It is safe to call concurrently.
+func (e *Engine) CohortDeepCount(ctx context.Context, account model.Account, senderKey string) (count int, truncated bool, err error) {
+	src := e.sources[account]
+	if src == nil {
+		return 0, false, fmt.Errorf("no account source for %s", account)
+	}
+	threads, truncated, err := src.ListThreadsBySender(ctx, senderKey, deepCohortLimit)
+	if err != nil {
+		return 0, false, err
+	}
+	if len(threads) == 0 {
+		return 0, truncated, nil
+	}
+	preds := e.classify(ctx, threads)
+	for _, t := range threads {
+		if p, ok := preds[t.ID]; ok && isTriageCategory(p.Category) {
+			count++
+		}
+	}
+	return count, truncated, nil
+}
+
 func (e *Engine) loadThreads(ctx context.Context) ([]*model.Thread, []string, error) {
 	type res struct {
 		acct model.Account

@@ -58,6 +58,13 @@ bulk action (`A`/`U`/`R`/`N`/`K`/`S`/`D`) acts on the whole sender. Receipts/new
 (auto-handled) and keeps stay out of the cohort — they are never dragged into an
 archive.
 
+The `×N` figure is a **server-true deep count**: after the list loads, sift
+queries each account for the sender's full inbox thread set (not just the
+~200-thread window it classified), classifies the new ones (cache-backed), and
+counts the triage-category ones. Fetches run in the background, 3 at a time, so
+the badge updates live once each result lands; a trailing `+` means the sender's
+volume exceeded the per-sender fetch cap and the count is approximate.
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ ▸ archive    no_reply@email.apple.com  Your app, Lyklaborð… [f]  14h  ×4 │

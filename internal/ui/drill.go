@@ -175,6 +175,8 @@ func (m *appModel) candidateCompactRow(c *triage.Candidate, width int, sel bool)
 	}
 	subj := c.Thread.Subject
 
+	cohortLabel := m.cohortLabel(c)
+
 	// Slots sum exactly to width: 2 (cursor frame) + badge + gaps + sender + subj
 	// (+ inbox + age + cohort at full width). Cells are styled via cell() so a
 	// focused row's highlight carries through every cell and gap.
@@ -196,7 +198,7 @@ func (m *appModel) candidateCompactRow(c *triage.Candidate, width int, sel bool)
 			cell("  ", noStyle, sel) +
 			cell(fit(ageString(c.Thread.Date, m.now), ageW), dimStyle, sel) +
 			cell("  ", noStyle, sel) +
-			cell(fit(fmt.Sprintf("×%d", c.CohortCount()), cohortW), dimStyle, sel)
+			cell(fit(cohortLabel, cohortW), dimStyle, sel)
 	case width >= 48:
 		content = cell(fit(badge, 8), actionColor[c.Pred.Action], sel) +
 			cell(" ", noStyle, sel) +
@@ -209,6 +211,21 @@ func (m *appModel) candidateCompactRow(c *triage.Candidate, width int, sel bool)
 			cell(fit(subj, 10), noStyle, sel)
 	}
 	return finishRow(content, width, sel)
+}
+
+// cohortLabel returns the ×N badge for a candidate: the server-true deep cohort
+// count once fetched (append "+" when that fetch was capped), otherwise the
+// count from the loaded window.
+func (m *appModel) cohortLabel(c *triage.Candidate) string {
+	k := cohortKey{account: c.Thread.Account, sender: c.Thread.SenderKey()}
+	n := c.CohortCount()
+	if dn, ok := m.deepCohorts[k]; ok {
+		n = dn
+		if m.deepCohortTrunc[k] {
+			return fmt.Sprintf("×%d+", n)
+		}
+	}
+	return fmt.Sprintf("×%d", n)
 }
 
 // renderThreadColumn renders the selected candidate's cohort threads.
